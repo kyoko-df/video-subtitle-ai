@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shengmu"
+version = "0.1.0"
+description = "Local and cloud AI subtitles for video, with a browser GUI and CLI"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1"]
+
+[project.optional-dependencies]
+local = ["faster-whisper>=1.1,<2", "av>=11,<16"]
+openai = ["openai>=1.60,<3"]
+all = ["faster-whisper>=1.1,<2", "av>=11,<16", "openai>=1.60,<3"]
+dev = ["pytest>=8,<10", "httpx>=0.27,<1", "ruff>=0.9,<1"]
+
+[project.scripts]
+shengmu = "shengmu.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+shengmu = ["web/*.html", "web/*.css", "web/*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = ["E501"]

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "source": "example.mp4",
+  "duration": 8.0,
+  "language": "zh",
+  "engine": "example",
+  "model": "example",
+  "segments": [
+    {"start": 0.5, "end": 2.6, "text": "欢迎使用声幕。"},
+    {"start": 3.0, "end": 6.2, "text": "这是一份用于演示格式转换的示例字幕。"}
+  ],
+  "metadata": {"note": "示例数据，不是 AI 转写结果"}
+}

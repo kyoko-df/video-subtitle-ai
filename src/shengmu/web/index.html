@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>声幕 · AI 字幕工作台</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%23e65b35'/%3E%3Cpath d='M12 18v6m8-12v16m8-10v6' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="声幕首页"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><strong>声幕</strong><span class="brand-en">SHENGMU</span></a>
+    <span class="app-label">AI 字幕工作台</span>
+    <span class="connection" id="connection"><span class="dot"></span>连接本地服务…</span>
+  </header>
+  <main class="app">
+    <aside class="inspector" aria-label="转写设置">
+      <div class="section-top"><h1>创建字幕</h1><span class="small-label">01 / 配置</span></div>
+      <section class="settings-section">
+        <div class="label-row"><h2>源文件</h2><span id="file-size" class="muted"></span></div>
+        <button class="dropzone" id="dropzone" type="button">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M4 16v4h16v-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span id="file-label">选择或拖入视频 / 音频</span>
+          <span class="muted" id="upload-hint">MP4、MOV、MKV、MP3、WAV 等</span>
+        </button>
+        <input id="file-input" type="file" accept="video/*,audio/*,.mkv,.flv,.ts,.m4a" hidden>
+        <div class="upload-progress" id="upload-progress" hidden><div></div></div>
+        <label class="field">音轨<select id="track" disabled><option>选择文件后读取音轨</option></select></label>
+      </section>
+      <section class="settings-section">
+        <h2>转写引擎</h2>
+        <div class="segmented" aria-label="转写引擎"><button class="selected" id="local-mode" type="button" aria-pressed="true">本地模型</button><button id="openai-mode" type="button" aria-pressed="false">OpenAI API</button></div>
+        <p class="engine-note" id="engine-note">音频保留在本机，首次运行会下载模型。</p>
+        <div id="local-settings">
+          <label class="field">模型<select id="model"><option value="tiny">Tiny · 快速试用</option><option value="base">Base · 轻量</option><option value="small" selected>Small · 平衡</option><option value="medium">Medium · 更高精度</option><option value="large-v3">Large v3 · 高精度</option><option value="turbo">Turbo</option></select></label>
+          <div class="field-pair"><label class="field">计算设备<select id="device"><option value="cpu">CPU</option><option value="cuda">NVIDIA GPU</option><option value="auto">自动</option></select></label><label class="field">计算精度<select id="compute"><option value="int8">INT8</option><option value="float32">FP32</option><option value="float16">FP16</option><option value="int8_float16">INT8 / FP16</option><option value="auto">自动</option></select></label></div>
+        </div>
+        <div id="openai-settings" hidden><div class="api-model">whisper-1 <span>支持字幕时间戳</span></div><p class="muted" id="key-status"></p></div>
+        <label class="field">识别语言<select id="language"><option value="">自动检测</option><option value="zh">中文</option><option value="en">英语</option><option value="ja">日语</option><option value="ko">韩语</option><option value="fr">法语</option><option value="de">德语</option><option value="es">西班牙语</option><option value="ru">俄语</option><option value="ar">阿拉伯语</option></select></label>
+        <details><summary>专有名词提示</summary><label class="field"><span class="sr-only">识别提示</span><textarea id="prompt" rows="2" maxlength="2000" placeholder="例如：产品名称、人名、专业术语"></textarea></label></details>
+      </section>
+      <section class="settings-section export-settings">
+        <div class="label-row"><h2>导出格式</h2><span class="muted">可多选</span></div>
+        <div class="format-options" id="format-options"><label><input type="checkbox" value="srt" checked><span>SRT</span></label><label><input type="checkbox" value="vtt"><span>VTT</span></label><label><input type="checkbox" value="ass"><span>ASS</span></label><label><input type="checkbox" value="txt"><span>TXT</span></label><label><input type="checkbox" value="json"><span>JSON</span></label></div>
+      </section>
+      <div class="start-area"><button id="start" class="primary" disabled type="button">生成字幕 <span aria-hidden="true">↗</span></button><button id="cancel" class="secondary" type="button" hidden>取消任务</button><p class="muted">在本机处理 · 可随时取消</p></div>
+    </aside>
+    <section class="workspace" aria-label="字幕工作区">
+      <div class="workspace-heading"><div><div class="eyebrow">SUBTITLE STUDIO</div><h2 id="workspace-title">预览与校对</h2></div><span id="duration" class="duration">00:00</span></div>
+      <div id="alert" class="alert" role="alert" hidden></div>
+      <div class="preview" id="preview">
+        <div class="preview-empty" id="preview-empty"><div class="sound-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><h3>从一段声音开始</h3><p>选择文件，生成可以编辑的时间轴字幕</p></div>
+        <video id="video" controls preload="metadata" hidden></video>
+        <div class="subtitle-preview" id="subtitle-preview" hidden></div>
+        <div class="preview-tag">本地预览</div>
+      </div>
+      <div class="timeline" id="timeline" aria-label="字幕时间轴"><div class="timeline-axis"><span>00:00</span><span id="timeline-end">--:--</span></div><div class="timeline-lane" id="timeline-lane"><span class="timeline-empty">生成后在这里查看字幕分布</span></div></div>
+      <div class="task-progress" id="task-progress" hidden><div class="task-status"><span id="task-message" role="status" aria-live="polite"></span><span id="task-percent">0%</span></div><div class="progress-track"><div id="progress-bar"></div></div><div class="steps"><span data-stage="extract">提取音轨</span><span data-stage="transcribe">识别语音</span><span data-stage="export">导出字幕</span></div></div>
+      <div class="subtitle-heading"><div><h3>字幕列表 <span id="cue-count">0</span></h3><p id="edit-hint">生成后可修改文本和时间，点击时间跳转预览。</p></div><button id="save" class="secondary" type="button" disabled>保存并导出</button></div>
+      <div class="cue-table"><div class="cue-columns"><span>序号</span><span>时间 / 秒</span><span>字幕内容</span><span></span></div><div id="cue-list"><div class="cues-empty"><svg width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect x="3" y="6" width="26" height="20" rx="3" stroke="currentColor" stroke-width="1.4"/><path d="M9 14h7m-7 5h14m-3-5h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><p>字幕将在这里显示</p><span>原始时间轴 · 自由校对 · 多格式导出</span></div></div></div>
+      <div class="downloads" id="downloads" hidden><span>下载字幕</span><div id="download-links"></div><p>编辑后请先保存，下载文件才会更新。</p></div>
+      <footer class="workspace-footer"><span>声幕 / SHENGMU</span><span id="footer-status">本地字幕工作台</span></footer>
+    </section>
+  </main>
+</body>
+</html>
