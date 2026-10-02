@@ -40,6 +40,9 @@ def test_real_sdk_multipart_contract_and_global_timestamps(monkeypatch, tmp_path
         assert b'name="response_format"' in body and b"verbose_json" in body
         assert b'name="timestamp_granularities[]"' in body and b"segment" in body
         assert b"whisper-1" in body and b'name="language"' in body
+        if requests:
+            assert b'name="prompt"' in body and b"Hello" in body
+        assert b"word" in body
         requests.append(request)
         return httpx.Response(
             200,
@@ -86,6 +89,88 @@ def test_real_sdk_multipart_contract_and_global_timestamps(monkeypatch, tmp_path
     assert [s.start for s in segments] == [0.1, 30.1, 60.1]
     assert language == "en" and model == "whisper-1"
     assert not (tmp_path / "api-chunk.wav").exists()
+
+
+def test_chunk_boundary_prefers_nearby_silence_without_losing_samples(tmp_path):
+    audio = tmp_path / "speech.wav"
+    with wave.open(str(audio), "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(16000)
+        stream.writeframes(b"\x10\x27" * (16000 * 28) + b"\0\0" * 8000 + b"\x10\x27" * 200000)
+    chunks = []
+    total_frames = 0
+    for path, offset, duration in wav_chunks(audio, 30):
+        chunks.append((offset, duration))
+        with wave.open(str(path), "rb") as source:
+            total_frames += source.getnframes()
+    assert 28 <= chunks[0][1] <= 28.5
+    assert chunks[1][0] == chunks[0][1]
+    assert total_frames == 16000 * 28 + 8000 + 200000
+
+
+def test_oversized_chunk_is_cleaned(monkeypatch, tmp_path):
+    audio = tmp_path / "audio.wav"
+    make_wav(audio, 1)
+    stat = Path.stat
+
+    def oversized(path, *args, **kwargs):
+        from types import SimpleNamespace
+
+        if path.name == "api-chunk.wav":
+            return SimpleNamespace(st_size=25_000_000)
+        return stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", oversized)
+    with pytest.raises(SubtitleError, match="25MB"):
+        list(wav_chunks(audio, 30))
+    monkeypatch.setattr(Path, "stat", stat)
+    assert not (tmp_path / "api-chunk.wav").is_file()
+
+
+def test_api_word_alignment_and_hallucination_filter(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    openai = pytest.importorskip("openai")
+    calls = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.audio = SimpleNamespace(transcriptions=SimpleNamespace(create=self.create))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def create(self, file, **kwargs):
+            calls.append(kwargs)
+            assert file.read(4) == b"RIFF"
+            return SimpleNamespace(
+                language="zh",
+                text="你好，世界！字幕由 Amara.org 社区提供",
+                segments=[
+                    SimpleNamespace(start=0, end=2, text="你好，世界！"),
+                    SimpleNamespace(start=2, end=3, text="字幕由 Amara.org 社区提供"),
+                ],
+                words=[
+                    SimpleNamespace(start=0.2, end=0.8, word="你好"),
+                    SimpleNamespace(start=1, end=1.8, word="世界"),
+                ],
+            )
+
+    monkeypatch.setattr(openai, "OpenAI", Client)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-only-not-a-real-key")
+    audio = tmp_path / "audio.wav"
+    make_wav(audio, 3)
+    cues, language, _ = OpenAIEngine().transcribe(
+        audio, EngineOptions(language="zh"), lambda *args: None, None
+    )
+    assert language == "zh"
+    assert cues[0].start == 0.2 and cues[-1].end == pytest.approx(1.8)
+    assert "".join(c.text.replace("\n", "") for c in cues) == "你好，世界！"
+    assert "简体中文" in calls[0]["prompt"]
 
 
 def test_missing_key_does_not_upload(monkeypatch, tmp_path: Path):

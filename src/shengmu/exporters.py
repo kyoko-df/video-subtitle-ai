@@ -38,7 +38,7 @@ def render(transcript: Transcript, fmt: str) -> str:
         blocks = []
         for index, segment in enumerate(transcript.segments, 1):
             start, end = times(segment.start, segment.end, 1000, "," if fmt == "srt" else ".")
-            text = html.escape(segment.text, quote=False)
+            text = html.escape(segment.text, quote=False) if fmt == "vtt" else segment.text
             blocks.append(f"{index}\n{start} --> {end}\n{text}\n")
         return ("WEBVTT\n\n" if fmt == "vtt" else "") + "\n".join(blocks)
     header = """[Script Info]

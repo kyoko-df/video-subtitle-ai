@@ -77,6 +77,144 @@ def test_gui_upload_job_edit_download_contract(media: Path, monkeypatch):
         assert client.get(f"/api/jobs/{job_id}/files/vtt").status_code == 404
 
 
+def test_delete_upload_preserves_completed_subtitles(media, monkeypatch):
+    monkeypatch.setattr("shengmu.server.transcribe", fake_transcribe)
+    with TestClient(create_app()) as client:
+        headers = {"X-Session-Token": client.get("/api/config").json()["token"]}
+        upload = client.post(
+            "/api/media", params={"name": media.name}, content=media.read_bytes(), headers=headers
+        ).json()
+        path = client.app.state.workspace.media[upload["id"]].path
+        job = client.post("/api/jobs", json={"media_id": upload["id"]}, headers=headers).json()
+        assert wait_done(client, job["id"])["status"] == "done"
+        assert client.delete(f"/api/media/{upload['id']}").status_code == 403
+        assert client.delete(f"/api/media/{upload['id']}", headers=headers).status_code == 200
+        assert not path.exists()
+        assert client.get(f"/api/jobs/{job['id']}/files/srt").status_code == 200
+        assert (
+            client.post("/api/jobs", json={"media_id": upload["id"]}, headers=headers).status_code
+            == 404
+        )
+
+
+def test_cannot_delete_active_upload(media, monkeypatch):
+    from threading import Event
+
+    started, finish = Event(), Event()
+
+    def blocked(*args):
+        started.set()
+        assert finish.wait(5)
+        return fake_transcribe(*args)
+
+    monkeypatch.setattr("shengmu.server.transcribe", blocked)
+    with TestClient(create_app()) as client:
+        headers = {"X-Session-Token": client.get("/api/config").json()["token"]}
+        upload = client.post(
+            "/api/media", params={"name": media.name}, content=media.read_bytes(), headers=headers
+        ).json()
+        job = client.post("/api/jobs", json={"media_id": upload["id"]}, headers=headers).json()
+        try:
+            assert started.wait(5)
+            assert client.delete(f"/api/media/{upload['id']}", headers=headers).status_code == 409
+        finally:
+            finish.set()
+        assert wait_done(client, job["id"])["status"] == "done"
+
+
+def test_gui_model_allowlist_and_quality_options():
+    with TestClient(create_app()) as client:
+        headers = {"X-Session-Token": client.get("/api/config").json()["token"]}
+        for model in ("/tmp/model", "unknown/repository"):
+            assert (
+                client.post(
+                    "/api/jobs", json={"media_id": "missing", "model": model}, headers=headers
+                ).status_code
+                == 422
+            )
+        assert client.get("/api/config").json()["version"] == client.app.version
+        assert client.get("/api/config", headers={"host": "[::1]:8765"}).status_code == 200
+        assert (
+            client.get("/api/config", headers={"host": "localhost@evil.example"}).status_code == 403
+        )
+
+
+def test_session_storage_limit_and_release(media, monkeypatch):
+    with TestClient(
+        create_app(max_upload=media.stat().st_size, max_storage=media.stat().st_size)
+    ) as client:
+        headers = {"X-Session-Token": client.get("/api/config").json()["token"]}
+        first = client.post(
+            "/api/media", params={"name": media.name}, content=media.read_bytes(), headers=headers
+        ).json()
+        second = client.post(
+            "/api/media", params={"name": media.name}, content=media.read_bytes(), headers=headers
+        )
+        assert second.status_code == 413
+        assert len(list(client.app.state.workspace.root.iterdir())) == 1
+        assert client.delete(f"/api/media/{first['id']}", headers=headers).status_code == 200
+        assert (
+            client.post(
+                "/api/media",
+                params={"name": media.name},
+                content=media.read_bytes(),
+                headers=headers,
+            ).status_code
+            == 200
+        )
+
+
+def test_unexpected_job_failure_is_logged(media, monkeypatch, caplog):
+    def fail(*args):
+        raise RuntimeError("diagnostic marker")
+
+    monkeypatch.setattr("shengmu.server.transcribe", fail)
+    with TestClient(create_app()) as client:
+        headers = {"X-Session-Token": client.get("/api/config").json()["token"]}
+        upload = client.post(
+            "/api/media", params={"name": media.name}, content=media.read_bytes(), headers=headers
+        ).json()
+        job = client.post("/api/jobs", json={"media_id": upload["id"]}, headers=headers).json()
+        assert wait_done(client, job["id"])["status"] == "error"
+        assert "RuntimeError: diagnostic marker" in caplog.text
+        assert "Traceback" in caplog.text
+
+
+def test_upload_writes_run_in_worker_thread(media, monkeypatch):
+    import threading
+
+    from shengmu import server
+
+    original = server.run_in_threadpool
+    threads = []
+
+    async def dispatch(func, *args, **kwargs):
+        if getattr(func, "__name__", "") == "write":
+            event_loop_thread = threading.get_ident()
+
+            def write():
+                threads.append((event_loop_thread, threading.get_ident()))
+                return func(*args, **kwargs)
+
+            return await original(write)
+        return await original(func, *args, **kwargs)
+
+    monkeypatch.setattr(server, "run_in_threadpool", dispatch)
+    with TestClient(create_app()) as client:
+        headers = {"X-Session-Token": client.get("/api/config").json()["token"]}
+        assert (
+            client.post(
+                "/api/media",
+                params={"name": media.name},
+                content=media.read_bytes(),
+                headers=headers,
+            ).status_code
+            == 200
+        )
+        assert threads and all(loop != worker for loop, worker in threads)
+        assert not client.app.state.workspace.upload_sizes
+
+
 def test_session_and_host_restrictions():
     with TestClient(create_app()) as client:
         assert client.post("/api/jobs", json={"media_id": "missing"}).status_code == 403

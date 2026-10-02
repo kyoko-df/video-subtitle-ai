@@ -36,6 +36,12 @@ def test_timestamp_rollover_and_json_roundtrip():
     assert "你好，世界。" in render(data, "txt")
 
 
+def test_srt_preserves_ampersands_and_vtt_escapes_markup():
+    data = Transcript("a", 2, "en", "local", "tiny", [Segment(0, 1, "AT&T <test>")])
+    assert "AT&T <test>" in render(data, "srt")
+    assert "AT&amp;T &lt;test&gt;" in render(data, "vtt")
+
+
 def test_short_cue_keeps_positive_serialized_duration():
     data = Transcript("a", 1, None, "local", "tiny", [Segment(0.0001, 0.0002, "短")])
     assert "00:00:00,000 --> 00:00:00,001" in render(data, "srt")

@@ -12,3 +12,6 @@ build/
 subtitles/
 models/
 .DS_Store
+.coverage
+htmlcov/
+.playwright-mcp/

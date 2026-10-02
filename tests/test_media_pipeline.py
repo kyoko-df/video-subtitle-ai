@@ -156,6 +156,21 @@ def test_cli_inspect_and_json_export(media: Path, tmp_path: Path, capsys):
     )
 
 
+def test_cli_verbose_prints_redacted_exception_chain(monkeypatch, capsys):
+    def fail(*args):
+        try:
+            raise RuntimeError("vendor https://user:password@example.com token test-secret-value")
+        except RuntimeError as exc:
+            raise SubtitleError("friendly message") from exc
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-secret-value")
+    monkeypatch.setattr("shengmu.cli.probe", fail)
+    assert main(["inspect", "missing.mp4", "--verbose"]) == 1
+    error = capsys.readouterr().err
+    assert "RuntimeError" in error and "Traceback" in error
+    assert "test-secret-value" not in error and "user:password" not in error
+
+
 def test_output_conflict_stops_before_ai(monkeypatch, tmp_path: Path):
     existing = tmp_path / "video.srt"
     existing.write_text("keep")

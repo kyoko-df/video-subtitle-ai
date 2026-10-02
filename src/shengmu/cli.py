@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
-import os
-import shutil
 import sys
 from pathlib import Path
 from threading import Timer
 
 from . import __version__
+from .diagnostics import doctor, redacted_traceback
 from .engines import EngineOptions
 from .exporters import FORMATS, export_files
 from .media import probe
@@ -20,6 +18,7 @@ from .pipeline import transcribe_to_files
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="shengmu", description="声幕：自动生成带时间轴的视频字幕")
     root.add_argument("--version", action="version", version=__version__)
+    root.add_argument("--verbose", action="store_true", help="显示经过敏感信息脱敏的异常链")
     commands = root.add_subparsers(dest="command", required=True)
     run = commands.add_parser("transcribe", help="提取音轨并调用 AI 生成字幕")
     run.add_argument("input", type=Path, help="视频或音频文件")
@@ -30,6 +29,18 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--device", choices=("cpu", "cuda", "auto"), default="cpu")
     run.add_argument("--compute-type", default="int8", help="本地模型计算精度，例如 int8/float16")
     run.add_argument("--prompt", default="", help="人名、专有名词等识别提示")
+    run.add_argument(
+        "--condition-on-previous-text",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="本地识别是否使用前文；默认关闭以减少重复",
+    )
+    run.add_argument(
+        "--filter-hallucinations",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="过滤已知的孤立幻觉字幕",
+    )
     run.add_argument("--chunk-seconds", type=int, default=600, help="API 分块长度，30–600 秒")
     run.add_argument("--format", choices=FORMATS, nargs="+", default=["srt"], dest="formats")
     run.add_argument("--output-dir", type=Path, default=Path("subtitles"))
@@ -46,18 +57,14 @@ def parser() -> argparse.ArgumentParser:
     gui.add_argument("--port", type=int, default=8765)
     gui.add_argument("--no-browser", action="store_true", help="仅启动服务，不自动打开浏览器")
     commands.add_parser("doctor", help="检查工具和 AI 引擎是否已安装")
+    for command in commands.choices.values():
+        command.add_argument(
+            "--verbose",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="显示经过敏感信息脱敏的异常链",
+        )
     return root
-
-
-def doctor() -> dict:
-    return {
-        "python": sys.version.split()[0],
-        "ffmpeg": shutil.which(os.environ.get("FFMPEG_BINARY", "ffmpeg")),
-        "ffprobe": shutil.which(os.environ.get("FFPROBE_BINARY", "ffprobe")),
-        "local_engine_installed": importlib.util.find_spec("faster_whisper") is not None,
-        "openai_engine_installed": importlib.util.find_spec("openai") is not None,
-        "openai_key_configured": bool(os.environ.get("OPENAI_API_KEY", "").strip()),
-    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -92,7 +99,12 @@ def main(argv: list[str] | None = None) -> int:
                 timer.daemon = True
                 timer.start()
             print(f"声幕 GUI：http://127.0.0.1:{args.port}（Ctrl+C 停止）")
-            uvicorn.run(create_app(), host="127.0.0.1", port=args.port, log_level="warning")
+            uvicorn.run(
+                create_app(),
+                host="127.0.0.1",
+                port=args.port,
+                log_level="info" if args.verbose else "warning",
+            )
         else:
             options = EngineOptions(
                 args.engine,
@@ -102,6 +114,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.compute_type,
                 args.prompt,
                 args.chunk_seconds,
+                condition_on_previous_text=args.condition_on_previous_text,
+                filter_hallucinations=args.filter_hallucinations,
             )
 
             def progress(stage: str, amount: float, message: str) -> None:
@@ -133,4 +147,11 @@ def main(argv: list[str] | None = None) -> int:
         return 130
     except (SubtitleError, OSError, ValueError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
+        if args.verbose:
+            print(redacted_traceback(), file=sys.stderr)
+        return 1
+    except Exception:
+        print("错误：任务失败，请使用 --verbose 查看诊断信息。", file=sys.stderr)
+        if args.verbose:
+            print(redacted_traceback(), file=sys.stderr)
         return 1

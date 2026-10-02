@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import secrets
 import shutil
 import tempfile
@@ -11,6 +12,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -18,7 +20,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from .cli import doctor
+from . import __version__
+from .diagnostics import doctor, redacted_traceback
 from .engines import EngineOptions
 from .exporters import FORMATS, export_files
 from .media import MediaInfo, probe
@@ -27,17 +30,20 @@ from .pipeline import transcribe
 
 WEB = Path(__file__).with_name("web")
 TERMINAL = {"done", "error", "cancelled"}
+logger = logging.getLogger(__name__)
 
 
 class JobRequest(BaseModel):
     media_id: str
     engine: Literal["local", "openai"] = "local"
-    model: str = Field(default="small", min_length=1, max_length=512)
+    model: Literal["tiny", "base", "small", "medium", "large-v3", "turbo"] = "small"
     language: str | None = Field(default=None, max_length=20)
     track: int | None = None
     device: Literal["cpu", "cuda", "auto"] = "cpu"
     compute_type: Literal["int8", "float32", "float16", "int8_float16", "auto"] = "int8"
     prompt: str = Field(default="", max_length=2000)
+    condition_on_previous_text: bool = False
+    filter_hallucinations: bool = True
     formats: list[Literal["srt", "vtt", "ass", "txt", "json"]] = Field(
         default_factory=lambda: ["srt"]
     )
@@ -61,6 +67,7 @@ class Media:
     path: Path
     name: str
     info: MediaInfo
+    size: int = 0
     created: float = field(default_factory=time.monotonic)
 
 
@@ -98,9 +105,11 @@ class Job:
 
 
 class Workspace:
-    def __init__(self, root: Path, max_upload: int):
+    def __init__(self, root: Path, max_upload: int, max_storage: int):
         self.root = root
         self.max_upload = max_upload
+        self.max_storage = max_storage
+        self.upload_sizes: dict[str, int] = {}
         self.media: dict[str, Media] = {}
         self.jobs: dict[str, Job] = {}
         self.lock = threading.RLock()
@@ -113,6 +122,16 @@ class Workspace:
             raise HTTPException(404, "任务不存在，或服务已重新启动。")
         return job
 
+    def release_media(self, media_id: str) -> None:
+        with self.lock:
+            media = self.media.get(media_id)
+            if not media:
+                raise HTTPException(404, "文件不存在，或已经释放。")
+            if any(job.media is media and job.status not in TERMINAL for job in self.jobs.values()):
+                raise HTTPException(409, "文件仍用于排队或处理中的任务，暂时不能删除。")
+            shutil.rmtree(media.path.parent)
+            del self.media[media_id]
+
     def cleanup(self) -> None:
         # Session results expire after 24 hours. Only unreferenced uploads can be removed.
         cutoff = time.monotonic() - 86400
@@ -121,7 +140,9 @@ class Workspace:
                 if job.status in TERMINAL and job.updated < cutoff:
                     shutil.rmtree(job.directory, ignore_errors=True)
                     del self.jobs[job_id]
-            referenced = {job.media.path for job in self.jobs.values()}
+            referenced = {
+                job.media.path for job in self.jobs.values() if job.status not in TERMINAL
+            }
             for media_id, media in list(self.media.items()):
                 if media.created < cutoff and media.path not in referenced:
                     shutil.rmtree(media.path.parent, ignore_errors=True)
@@ -137,7 +158,16 @@ class Workspace:
             r = job.request
             result = transcribe(
                 job.media.path,
-                EngineOptions(r.engine, r.model, r.language, r.device, r.compute_type, r.prompt),
+                EngineOptions(
+                    r.engine,
+                    r.model,
+                    r.language,
+                    r.device,
+                    r.compute_type,
+                    r.prompt,
+                    condition_on_previous_text=r.condition_on_previous_text,
+                    filter_hallucinations=r.filter_hallucinations,
+                ),
                 r.track,
                 update,
                 job.cancel,
@@ -161,8 +191,10 @@ class Workspace:
         except Cancelled:
             update("cancelled", job.progress, "任务已取消。")
         except SubtitleError as exc:
+            logger.error("转写任务 %s 失败\n%s", job.id, redacted_traceback())
             update("error", job.progress, str(exc))
         except Exception:
+            logger.error("转写任务 %s 异常\n%s", job.id, redacted_traceback())
             update("error", job.progress, "任务失败，请检查依赖、文件权限和媒体格式。")
 
     def close(self) -> None:
@@ -172,23 +204,38 @@ class Workspace:
         self.executor.shutdown(wait=True, cancel_futures=True)
 
 
-def create_app(max_upload: int = 2 * 1024**3) -> FastAPI:
+def create_app(max_upload: int = 2 * 1024**3, max_storage: int | None = None) -> FastAPI:
+    max_storage = max_upload * 2 if max_storage is None else max_storage
     token = secrets.token_urlsafe(32)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         with tempfile.TemporaryDirectory(prefix="shengmu-gui-") as directory:
-            workspace = Workspace(Path(directory), max_upload)
+            workspace = Workspace(Path(directory), max_upload, max_storage)
             app.state.workspace = workspace
             yield
             await run_in_threadpool(workspace.close)
 
-    app = FastAPI(title="声幕", version="0.1.0", lifespan=lifespan, docs_url=None, redoc_url=None)
+    app = FastAPI(
+        title="声幕", version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None
+    )
 
     @app.middleware("http")
     async def local_session(request: Request, call_next):
-        host = request.headers.get("host", "").split(":")[0]
-        if host not in {"127.0.0.1", "localhost", "testserver"}:
+        try:
+            authority = urlsplit("//" + request.headers.get("host", ""))
+            host = authority.hostname
+            valid = not (
+                authority.username
+                or authority.password
+                or authority.path
+                or authority.query
+                or authority.fragment
+            )
+            valid = valid and (authority.port is None or 1 <= authority.port <= 65535)
+        except ValueError:
+            host, valid = None, False
+        if not valid or host not in {"127.0.0.1", "localhost", "::1", "testserver"}:
             return JSONResponse({"detail": "仅允许本地访问。"}, status_code=403)
         if request.url.path.startswith("/api/") and request.method not in {"GET", "HEAD"}:
             if not secrets.compare_digest(request.headers.get("x-session-token", ""), token):
@@ -201,44 +248,70 @@ def create_app(max_upload: int = 2 * 1024**3) -> FastAPI:
 
     @app.get("/api/config")
     def config():
-        return {"token": token, "formats": FORMATS, "max_upload": max_upload, **doctor()}
+        return {
+            "token": token,
+            "formats": FORMATS,
+            "version": __version__,
+            "max_upload": max_upload,
+            "max_storage": max_storage,
+            **doctor(),
+        }
 
     @app.post("/api/media")
     async def upload(request: Request, name: str):
         workspace = app.state.workspace
-        workspace.cleanup()
+        await run_in_threadpool(workspace.cleanup)
         # Filename is used only inside a unique workspace directory.
         filename = Path(name.replace("\\", "/")).name
         if not filename or filename in {".", ".."} or len(filename.encode("utf-8")) > 240:
             raise HTTPException(400, "文件名无效或过长。")
         if any(ord(char) < 32 for char in filename):
             raise HTTPException(400, "文件名包含无效字符。")
-        with workspace.lock:
-            if len(workspace.media) >= 30:
-                raise HTTPException(429, "本次会话已达到 30 个文件，请重启服务以清理缓存。")
         media_id = uuid.uuid4().hex
+        with workspace.lock:
+            if len(workspace.media) + len(workspace.upload_sizes) >= 30:
+                raise HTTPException(429, "本次会话已达到 30 个文件，请释放旧文件或重启服务。")
+            workspace.upload_sizes[media_id] = 0
         folder = workspace.root / media_id
-        folder.mkdir()
         path = folder / filename
         size = 0
         try:
+            folder.mkdir()
             with path.open("wb") as stream:
                 async for chunk in request.stream():
                     size += len(chunk)
                     if size > max_upload:
                         raise HTTPException(413, "文件过大。请使用 CLI 直接处理本地文件。")
-                    stream.write(chunk)
+                    with workspace.lock:
+                        used = sum(m.size for m in workspace.media.values()) + sum(
+                            workspace.upload_sizes.values()
+                        )
+                        if used + len(chunk) > max_storage:
+                            raise HTTPException(413, "会话上传空间不足，请释放旧文件或使用 CLI。")
+                        workspace.upload_sizes[media_id] = size
+                    await run_in_threadpool(stream.write, chunk)
             if size == 0:
                 raise HTTPException(400, "文件为空。")
             info = await run_in_threadpool(probe, path)
+            if await request.is_disconnected():
+                raise HTTPException(409, "上传已取消。")
             with workspace.lock:
-                workspace.media[media_id] = Media(path, filename, info)
+                workspace.media[media_id] = Media(path, filename, info, size)
+                workspace.upload_sizes.pop(media_id, None)
             return {"id": media_id, "name": filename, "size": size, **info.to_dict()}
         except BaseException as exc:
-            shutil.rmtree(folder, ignore_errors=True)
+            await run_in_threadpool(shutil.rmtree, folder, ignore_errors=True)
             if isinstance(exc, SubtitleError):
                 raise HTTPException(400, str(exc)) from exc
             raise
+        finally:
+            with workspace.lock:
+                workspace.upload_sizes.pop(media_id, None)
+
+    @app.delete("/api/media/{media_id}")
+    def delete_media(media_id: str):
+        app.state.workspace.release_media(media_id)
+        return {"id": media_id, "deleted": True}
 
     @app.post("/api/jobs", status_code=202)
     def start_job(data: JobRequest):
@@ -278,8 +351,6 @@ def create_app(max_upload: int = 2 * 1024**3) -> FastAPI:
             if job.status not in TERMINAL:
                 job.cancel.set()
                 job.message = "正在取消，将在当前识别片段或请求结束后停止…"
-                if job.status == "queued":
-                    job.status = "cancelled"
             return job.public()
 
     @app.get("/api/jobs/{job_id}/transcript")
