@@ -21,9 +21,9 @@ def doctor() -> dict:
 
 def redacted_traceback() -> str:
     text = traceback.format_exc()
-    for name in ("OPENAI_API_KEY", "OPENAI_BASE_URL"):
+    for name in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "HF_TOKEN"):
         value = os.environ.get(name, "").strip()
         if value:
             text = text.replace(value, "[redacted]")
     text = re.sub(r"https?://[^\s\"'<>]+", "[redacted URL]", text)
-    return re.sub(r"\bsk-[A-Za-z0-9_-]+", "[redacted key]", text)
+    return re.sub(r"\b(?:sk-|hf_)[A-Za-z0-9_-]+", "[redacted key]", text)

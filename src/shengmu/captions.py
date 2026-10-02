@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import dataclass
 from typing import Iterable
 
-from .models import Segment
+from .models import Segment, SubtitleError, Word
 
 CJK = re.compile(r"[\u3000-\u9fff\uac00-\ud7af]")
 TOKENS = re.compile(r"\s*[A-Za-zÀ-ɏ0-9_]+(?:['’-][A-Za-zÀ-ɏ0-9_]+)*|\s*[^\s]")
@@ -18,6 +19,56 @@ HALLUCINATIONS = {
     "请不吝点赞订阅转发打赏支持明镜与点点栏目",
     "請不吝點贊訂閱轉發打賞支持明鏡與點點欄目",
 }
+
+
+@dataclass(frozen=True)
+class CaptionOptions:
+    cjk_chars: int = 20
+    latin_chars: int = 42
+    max_lines: int = 2
+    max_seconds: float = 7
+    min_seconds: float = 1
+    max_cps: float = 20
+
+    def validate(self):
+        if (
+            not 5 <= self.cjk_chars <= 100
+            or not 5 <= self.latin_chars <= 200
+            or not 1 <= self.max_lines <= 4
+            or not 0.5 <= self.max_seconds <= 30
+            or not 0 <= self.min_seconds <= self.max_seconds
+            or not 1 <= self.max_cps <= 100
+        ):
+            raise SubtitleError("字幕排版参数无效。")
+
+
+def quality_report(segments, options=None, allow_overlap=False):
+    options = options or CaptionOptions()
+    options.validate()
+    issues = []
+    last_end = 0
+    for index, cue in enumerate(segments):
+        messages = []
+        limit = options.cjk_chars if CJK.search(cue.text) else options.latin_chars
+        for text in (cue.text, cue.translation):
+            if not text:
+                continue
+            if len(text.splitlines()) > options.max_lines or any(
+                len(line) > limit for line in text.splitlines()
+            ):
+                messages.append("行数或行长超限")
+            if len(re.sub(r"\s", "", text)) / (cue.end - cue.start) > options.max_cps:
+                messages.append("阅读速度过快")
+        if cue.end - cue.start > options.max_seconds:
+            messages.append("显示时间过长")
+        if cue.end - cue.start < options.min_seconds:
+            messages.append("显示时间过短")
+        if cue.start < last_end - 0.001:
+            messages.append("重叠语音" if allow_overlap else "时间冲突")
+        if messages:
+            issues.append({"index": index, "messages": list(dict.fromkeys(messages))})
+        last_end = max(last_end, cue.end)
+    return issues
 
 
 def is_hallucination(text: str) -> bool:
@@ -47,11 +98,18 @@ def wrap_text(text: str, limit: int) -> str:
 
 
 def split_caption(
-    start: float, end: float, text: str, words: Iterable | None = None
+    start: float,
+    end: float,
+    text: str,
+    words: Iterable | None = None,
+    options: CaptionOptions | None = None,
 ) -> list[Segment]:
     if not text.strip() or end <= start:
         return []
-    limit = 20 if CJK.search(text) else 42
+    options = options or CaptionOptions()
+    options.validate()
+    limit = options.cjk_chars if CJK.search(text) else options.latin_chars
+    estimated = False
     timed = []
     last_end = max(0, start)
     for word in words or []:
@@ -85,6 +143,7 @@ def split_caption(
                 aligned[-1] = (a, b, content + text[cursor:])
             timed = aligned
     if not timed:
+        estimated = True
         timed = [(max(0, start), end, text)]
     units = []
     for a, b, content in timed:
@@ -93,11 +152,13 @@ def split_caption(
         cursor = a
         for token in tokens:
             finish = min(b, cursor + (b - a) * len(token) / weight)
-            pieces = list(token) if finish - cursor > 7 else [token]
+            pieces = list(token) if finish - cursor > options.max_seconds else [token]
             piece_start = cursor
             for piece in pieces:
                 piece_end = piece_start + (finish - cursor) * len(piece) / len(token)
-                units.append((piece_start, min(finish, piece_end, piece_start + 7), piece))
+                units.append(
+                    (piece_start, min(finish, piece_end, piece_start + options.max_seconds), piece)
+                )
                 piece_start = piece_end
             cursor = finish
     cues, pending = [], []
@@ -106,20 +167,27 @@ def split_caption(
         if pending:
             content = wrap_text("".join(u[2] for u in pending), limit)
             if content:
-                cues.append(Segment(pending[0][0], min(pending[-1][1], pending[0][0] + 7), content))
+                cues.append(
+                    Segment(
+                        pending[0][0],
+                        min(pending[-1][1], pending[0][0] + options.max_seconds),
+                        content,
+                        [Word(a, b, t, estimated) for a, b, t in pending if b > a and t.strip()],
+                    )
+                )
             pending.clear()
 
     for unit in units:
         if pending:
             combined = "".join(u[2] for u in pending) + unit[2]
             if (
-                unit[1] - pending[0][0] > 7 + 1e-8
+                unit[1] - pending[0][0] > options.max_seconds + 1e-8
                 or unit[0] - pending[-1][1] > 1
-                or len(wrap_text(combined, limit).splitlines()) > 2
+                or len(wrap_text(combined, limit).splitlines()) > options.max_lines
             ):
                 flush()
         pending.append(unit)
-        if unit[1] - pending[0][0] >= 1 and PUNCTUATION.search(unit[2].strip()):
+        if unit[1] - pending[0][0] >= options.min_seconds and PUNCTUATION.search(unit[2].strip()):
             flush()
     flush()
     return cues

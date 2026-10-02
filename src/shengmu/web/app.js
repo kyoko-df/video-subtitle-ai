@@ -10,6 +10,13 @@ const state = {
   rows: [],
   blocks: [],
   history: [],
+  redo: [],
+  draftTimer: null,
+  draftPromise: Promise.resolve(),
+  draftPending: false,
+  editGeneration: 0,
+  loop: null,
+  waveform: null,
   playback: [],
   playbackPosition: -1,
   activeIndex: -1,
@@ -74,9 +81,10 @@ function updateButtons() {
   $("release-source").disabled =
     !state.media || state.busy || state.saving || state.uploading;
   $("dropzone").disabled = state.busy || state.saving;
-  $("cancel").hidden = !state.busy;
+  $("cancel").hidden = !state.busy || state.job?.status === "done";
+  if (typeof updateStudioButtons === "function") updateStudioButtons(editing);
   for (const input of document.querySelectorAll(
-    ".inspector select, .inspector textarea, .inspector input[type=checkbox], .segmented button",
+    ".inspector select, .inspector textarea, .inspector input, .segmented button",
   )) {
     input.disabled =
       state.busy || state.saving || (input.id === "track" && !state.media);
@@ -84,7 +92,7 @@ function updateButtons() {
   for (const input of document.querySelectorAll(
     "#cue-list input, #cue-list textarea, #cue-list button",
   )) {
-    input.disabled = state.saving;
+    input.disabled = state.saving || state.busy;
   }
 }
 
@@ -156,6 +164,7 @@ function resetResult() {
   state.job = null;
   state.cues = [];
   state.history = [];
+  state.redo = [];
   state.dirty = false;
   state.transcriptDuration = null;
   sessionStorage.removeItem("shengmu-job");
@@ -201,7 +210,19 @@ async function uploadFile(file) {
     alertMessage("文件超过 GUI 上传上限，请使用 CLI 直接处理。");
     return;
   }
-  if (state.dirty && !window.confirm("放弃未保存的字幕修改并更换文件？"))
+  if (typeof flushDraft === "function") {
+    try {
+      await flushDraft();
+    } catch (error) {
+      alertMessage(error.message);
+      return;
+    }
+  }
+  if (
+    !state.config.persistent &&
+    state.dirty &&
+    !window.confirm("放弃未保存的字幕修改并更换文件？")
+  )
     return;
   const sequence = ++state.uploadSequence;
   state.xhr?.abort();
@@ -224,7 +245,9 @@ async function uploadFile(file) {
   $("workspace-title").textContent = file.name;
   updateButtons();
   try {
-    for (const id of [...state.pendingMedia]) await releaseMedia(id);
+    if (!state.config.persistent) {
+      for (const id of [...state.pendingMedia]) await releaseMedia(id);
+    } else state.pendingMedia.clear();
     if (sequence !== state.uploadSequence) return;
     const media = await uploadRequest(file, sequence);
     if (sequence !== state.uploadSequence) {
@@ -261,11 +284,17 @@ async function uploadFile(file) {
 
 function renderJob(job) {
   state.job = job;
-  state.busy = !terminal.has(job.status);
+  state.busy =
+    !terminal.has(job.status) ||
+    ["queued", "running"].includes(job.operation?.status);
   $("task-progress").hidden = false;
-  $("task-message").textContent = job.message;
-  $("task-percent").textContent = Math.round(job.progress * 100) + "%";
-  $("progress-bar").style.width = job.progress * 100 + "%";
+  $("task-message").textContent =
+    state.busy && job.operation?.message ? job.operation.message : job.message;
+  const progress = ["queued", "running"].includes(job.operation?.status)
+    ? job.operation.progress
+    : job.progress;
+  $("task-percent").textContent = Math.round(progress * 100) + "%";
+  $("progress-bar").style.width = progress * 100 + "%";
   const stageIndex =
     {
       queued: -1,
@@ -294,6 +323,7 @@ function renderJob(job) {
     link.download = file.name;
     $("download-links").append(link);
   }
+  if (typeof renderOperation === "function") renderOperation(job);
   updateButtons();
 }
 
@@ -306,13 +336,21 @@ async function pollJob(jobId, sequence = state.resultSequence) {
     )
       return;
     renderJob(job);
-    if (!terminal.has(job.status)) {
+    if (
+      !terminal.has(job.status) ||
+      ["queued", "running"].includes(job.operation?.status)
+    ) {
       state.pollTimer = setTimeout(() => pollJob(jobId, sequence), 900);
     } else if (job.status === "done") {
       const transcript = await api("/api/jobs/" + jobId + "/transcript");
       if (sequence !== state.resultSequence || state.job?.id !== jobId) return;
+      if (typeof loadProjectResult === "function") {
+        await loadProjectResult(job, transcript, sequence);
+        return;
+      }
       state.cues = transcript.segments;
       state.history = [];
+      state.redo = [];
       state.dirty = false;
       state.transcriptDuration = transcript.duration;
       $("workspace-title").textContent = job.source;
@@ -345,6 +383,7 @@ function seek(start) {
 function markDirty() {
   state.dirty = true;
   $("edit-hint").textContent = "有未保存修改。保存后下载文件会同步更新。";
+  if (typeof scheduleDraft === "function") scheduleDraft();
   updatePreview();
 }
 
@@ -357,6 +396,7 @@ function fitCueTexts(inputs) {
 }
 
 function recordEdit(edit) {
+  state.redo = [];
   state.history.push(edit);
   if (state.history.length > 100) state.history.shift();
   $("undo").disabled = state.saving || !state.history.length;
@@ -376,7 +416,14 @@ function rebuildPlayback() {
 }
 
 function updateCue(index, key, value) {
-  state.cues[index] = { ...state.cues[index], [key]: value };
+  const original = state.cues[index];
+  state.cues[index] = { ...original, [key]: value };
+  if (["text", "start", "end"].includes(key)) state.cues[index].words = [];
+  if (key === "text") {
+    state.cues[index].translation = null;
+    const translation = state.rows[index]?.querySelector(".cue-translation");
+    if (translation) translation.value = "";
+  }
   updateTimelineBlock(state.blocks[index], index);
   if (key !== "text") rebuildPlayback();
   markDirty();
@@ -462,7 +509,24 @@ function createCueRow(index) {
     };
     actions.append(button);
   }
-  row.append(number, timing, text, actions);
+  const content = document.createElement("div");
+  content.className = "cue-content";
+  const speaker = document.createElement("input");
+  speaker.className = "cue-speaker";
+  speaker.placeholder = "说话人（可选）";
+  speaker.maxLength = 80;
+  speaker.value = state.cues[index].speaker || "";
+  speaker.setAttribute("aria-label", "说话人");
+  bindCueInput(speaker, currentIndex, "speaker");
+  const translation = document.createElement("textarea");
+  translation.className = "cue-translation";
+  translation.placeholder = "译文（翻译后可修改）";
+  translation.rows = 1;
+  translation.value = state.cues[index].translation || "";
+  translation.setAttribute("aria-label", "译文");
+  bindCueInput(translation, currentIndex, "translation");
+  content.append(speaker, text, translation);
+  row.append(number, timing, content, actions);
   return row;
 }
 
@@ -473,14 +537,14 @@ function bindCueInput(input, currentIndex, key) {
   };
   input.oninput = () => {
     if (!original) original = { ...state.cues[currentIndex()] };
-    const value =
-      key === "text"
-        ? input.value
-        : input.value === ""
-          ? NaN
-          : Number(input.value);
+    const value = ["text", "speaker", "translation"].includes(key)
+      ? input.value
+      : input.value === ""
+        ? NaN
+        : Number(input.value);
     updateCue(currentIndex(), key, value);
-    if (key === "text") requestAnimationFrame(() => fitCueTexts([input]));
+    if (["text", "translation"].includes(key))
+      requestAnimationFrame(() => fitCueTexts([input]));
   };
   input.onchange = () => {
     const index = currentIndex();
@@ -503,14 +567,14 @@ function labelRows(start = 0, end = state.rows.length) {
       2,
       "0",
     );
-    for (const input of row.querySelectorAll("input")) {
+    for (const input of row.querySelectorAll(".cue-time input")) {
       input.setAttribute(
         "aria-label",
         `第 ${index + 1} 条字幕${input.dataset.key === "start" ? "开始" : "结束"}时间（秒）`,
       );
     }
     row
-      .querySelector("textarea")
+      .querySelector(".cue-text")
       .setAttribute("aria-label", `第 ${index + 1} 条字幕内容`);
     for (const button of row.querySelectorAll(".cue-actions button")) {
       button.setAttribute(
@@ -557,7 +621,13 @@ function createTimelineBlock(index) {
   block.className = "timeline-cue";
   block.type = "button";
   block.dataset.index = index;
-  block.onclick = () => seek(state.cues[Number(block.dataset.index)].start);
+  block.onclick = () => {
+    if (!block.dataset.dragged) {
+      state.selectedCue = Number(block.dataset.index);
+      seek(state.cues[Number(block.dataset.index)].start);
+    }
+  };
+  if (typeof bindTimelineDrag === "function") bindTimelineDrag(block);
   updateTimelineBlock(block, index);
   return block;
 }
@@ -641,10 +711,13 @@ function updatePreview() {
   );
   state.playbackPosition = position;
   const index = position >= 0 ? state.playback[position].index : -1;
-  const text = index >= 0 ? state.cues[index].text : "";
-  if ($("subtitle-preview").textContent !== text)
-    $("subtitle-preview").textContent = text;
-  $("subtitle-preview").hidden = index < 0 || !state.previewUrl;
+  if (typeof renderSubtitlePreview === "function") renderSubtitlePreview();
+  else {
+    const text = index >= 0 ? state.cues[index].text : "";
+    if ($("subtitle-preview").textContent !== text)
+      $("subtitle-preview").textContent = text;
+    $("subtitle-preview").hidden = index < 0 || !state.previewUrl;
+  }
   if (index === state.activeIndex) return;
   state.rows[state.activeIndex]?.classList.remove("active");
   state.blocks[state.activeIndex]?.classList.remove("active");
@@ -654,7 +727,20 @@ function updatePreview() {
 }
 
 $("start").onclick = async () => {
-  if (state.dirty && !window.confirm("放弃未保存修改并重新生成字幕？")) return;
+  if (typeof flushDraft === "function") {
+    try {
+      await flushDraft();
+    } catch (error) {
+      alertMessage(error.message);
+      return;
+    }
+  }
+  if (
+    !state.config.persistent &&
+    state.dirty &&
+    !window.confirm("放弃未保存修改并重新生成字幕？")
+  )
+    return;
   alertMessage();
   resetResult();
   state.busy = true;
@@ -664,6 +750,7 @@ $("start").onclick = async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        ...(typeof jobSettings === "function" ? jobSettings() : {}),
         media_id: state.media.id,
         engine: state.engine,
         model: $("model").value,
@@ -698,13 +785,27 @@ $("cancel").onclick = async () => {
   }
 };
 
-$("save").onclick = async () => {
+async function saveCurrentProject() {
   alertMessage();
-  if (!CueEditor.validCues(state.cues, state.transcriptDuration)) {
+  if (
+    !CueEditor.validCues(
+      state.cues,
+      state.transcriptDuration,
+      $("allow-overlap")?.checked,
+    )
+  ) {
     alertMessage(
-      "请检查字幕：内容不能为空，时间必须按顺序且不重叠，结束时间应在媒体时长内。",
+      "请检查字幕：内容不能为空，时间须按开始时间排序并符合重叠设置，结束时间应在媒体时长内。",
     );
     return;
+  }
+  if (typeof flushDraft === "function") {
+    try {
+      await flushDraft();
+    } catch (error) {
+      alertMessage(error.message);
+      return false;
+    }
   }
   state.saving = true;
   updateButtons();
@@ -715,13 +816,17 @@ $("save").onclick = async () => {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...(typeof exportSettings === "function" ? exportSettings() : {}),
+          revision: state.job.revision,
           segments: state.cues,
           formats: selectedFormats(),
         }),
       }),
     );
     state.dirty = false;
+    if (typeof clearLocalDraft === "function") clearLocalDraft();
     $("edit-hint").textContent = "已保存，所有已选格式均已更新。";
+    return true;
   } catch (error) {
     alertMessage(error.message);
   } finally {
@@ -729,7 +834,8 @@ $("save").onclick = async () => {
     $("save").textContent = "保存并导出";
     updateButtons();
   }
-};
+}
+$("save").onclick = saveCurrentProject;
 
 $("add-cue").onclick = () => {
   try {
@@ -747,7 +853,11 @@ $("add-cue").onclick = () => {
 
 $("undo").onclick = () => {
   const edit = state.history.pop();
-  if (edit) applyEditorEdit(CueEditor.inverseEdit(edit), false);
+  if (edit) {
+    state.redo.push(edit);
+    applyEditorEdit(CueEditor.inverseEdit(edit), false);
+    updateButtons();
+  }
 };
 
 $("release-source").onclick = async () => {
@@ -758,6 +868,13 @@ $("release-source").onclick = async () => {
     await releaseMedia(state.media.id);
     state.media = null;
     $("upload-hint").textContent = "源文件已释放，字幕仍可编辑和下载";
+    if (state.job) state.job.media_available = false;
+    state.previewUrl = null;
+    state.waveform = null;
+    state.loop = null;
+    $("video").removeAttribute("src");
+    $("video").hidden = true;
+    if (typeof drawWaveform === "function") drawWaveform();
   } catch (error) {
     alertMessage(error.message);
   } finally {
@@ -804,7 +921,7 @@ $("video").addEventListener("error", () => {
     );
 });
 window.addEventListener("beforeunload", (event) => {
-  if (state.dirty) {
+  if (state.draftPending) {
     event.preventDefault();
     event.returnValue = "";
   }
@@ -836,7 +953,8 @@ window.addEventListener("keydown", (event) => {
       : "未配置 API Key。请设置 OPENAI_API_KEY 后重启服务。";
     if (!state.config.ffmpeg || !state.config.ffprobe)
       alertMessage("未找到 FFmpeg / ffprobe，请安装后重新启动。");
-    switchEngine("local");
+    if (typeof initStudio === "function") await initStudio();
+    switchEngine(state.engine);
     const jobId = sessionStorage.getItem("shengmu-job");
     if (jobId) pollJob(jobId);
   } catch (error) {

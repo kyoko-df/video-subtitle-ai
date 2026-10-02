@@ -12,6 +12,7 @@
     <link rel="stylesheet" href="/style.css" />
     <script src="/editor.js" defer></script>
     <script src="/app.js" defer></script>
+    <script src="/studio.js" defer></script>
   </head>
   <body>
     <header class="topbar">
@@ -185,6 +186,153 @@
             >
           </div>
         </section>
+        <section class="settings-section">
+          <details>
+            <summary>排版与质检</summary>
+            <div class="settings-grid">
+              <label
+                >中文每行字数<input
+                  id="cjk-chars"
+                  type="number"
+                  min="5"
+                  max="100"
+                  value="20"
+              /></label>
+              <label
+                >其他语言每行字数<input
+                  id="latin-chars"
+                  type="number"
+                  min="5"
+                  max="200"
+                  value="42"
+              /></label>
+              <label
+                >最多行数<input
+                  id="max-lines"
+                  type="number"
+                  min="1"
+                  max="4"
+                  value="2"
+              /></label>
+              <label
+                >最长秒数<input
+                  id="max-seconds"
+                  type="number"
+                  min="0.5"
+                  max="30"
+                  step="0.1"
+                  value="7"
+              /></label>
+              <label
+                >最短秒数<input
+                  id="min-seconds"
+                  type="number"
+                  min="0"
+                  max="30"
+                  step="0.1"
+                  value="1"
+              /></label>
+              <label
+                >每秒最多字数<input
+                  id="max-cps"
+                  type="number"
+                  min="1"
+                  max="100"
+                  value="20"
+              /></label>
+            </div>
+            <button id="reflow" class="secondary" type="button" disabled>
+              按当前规则重新排版
+            </button>
+            <p class="muted">重新切分的字幕会清除译文，需要再次翻译。</p>
+          </details>
+          <details>
+            <summary>字幕样式与内容</summary>
+            <div class="settings-grid">
+              <label
+                >字体<input id="style-font" value="Arial" maxlength="80"
+              /></label>
+              <label
+                >字号<input
+                  id="style-size"
+                  type="number"
+                  min="12"
+                  max="200"
+                  value="54"
+              /></label>
+              <label
+                >颜色<input id="style-color" type="color" value="#ffffff"
+              /></label>
+              <label
+                >位置<select id="style-position">
+                  <option value="bottom">底部</option>
+                  <option value="middle">中间</option>
+                  <option value="top">顶部</option>
+                </select></label
+              >
+              <label
+                >边距<input
+                  id="style-margin"
+                  type="number"
+                  min="0"
+                  max="500"
+                  value="60"
+              /></label>
+              <label
+                >导出内容<select id="export-mode">
+                  <option value="original">原文</option>
+                  <option value="translated">译文</option>
+                  <option value="bilingual">双语</option>
+                </select></label
+              >
+            </div>
+            <label class="quality-option"
+              ><input
+                id="speaker-labels"
+                type="checkbox"
+              />显示说话人名称</label
+            >
+            <label class="quality-option"
+              ><input id="word-highlight" type="checkbox" />逐词高亮（预览 / ASS
+              / 烧录）</label
+            >
+            <label class="quality-option"
+              ><input
+                id="allow-overlap"
+                type="checkbox"
+              />允许重叠语音字幕</label
+            >
+            <p class="muted">
+              样式用于 ASS 和烧录视频。SRT / VTT 保留所选字幕内容。
+            </p>
+          </details>
+          <details>
+            <summary>说话人与模型</summary>
+            <label class="quality-option"
+              ><input id="diarize" type="checkbox" />自动区分说话人</label
+            >
+            <label
+              >已知说话人数（可空）<input
+                id="num-speakers"
+                type="number"
+                min="1"
+                max="20"
+                placeholder="自动检测"
+            /></label>
+            <p class="muted" id="diarization-hint">
+              自动识别需安装可选 pyannote 引擎；也可在字幕行中手动填写说话人。
+            </p>
+            <div
+              id="model-manager"
+              class="model-manager"
+              aria-live="polite"
+            ></div>
+          </details>
+          <button id="save-preferences" class="secondary" type="button">
+            保存为常用配置
+          </button>
+          <p class="muted" id="preferences-status" role="status"></p>
+        </section>
         <div class="start-area">
           <button id="start" class="primary" disabled type="button">
             生成字幕 <span aria-hidden="true">↗</span></button
@@ -202,6 +350,41 @@
           </div>
           <span id="duration" class="duration">00:00</span>
         </div>
+        <section class="project-panel" aria-label="项目与任务">
+          <div class="panel-heading">
+            <h3>项目与任务</h3>
+            <div class="toolbar">
+              <button id="batch-select" class="secondary" type="button">
+                批量添加并转写</button
+              ><button id="batch-cancel" class="secondary" type="button" hidden>
+                停止添加</button
+              ><a
+                class="secondary"
+                href="/api/downloads.zip"
+                id="batch-download"
+                >批量下载 ZIP</a
+              ><button id="history-refresh" class="secondary" type="button">
+                刷新
+              </button>
+            </div>
+          </div>
+          <input
+            id="batch-input"
+            type="file"
+            multiple
+            accept="video/*,audio/*,.mkv,.flv,.ts,.m4a"
+            hidden
+          />
+          <p id="batch-status" class="muted" role="status"></p>
+          <p id="project-storage" class="muted"></p>
+          <div id="job-list" class="job-list" aria-live="polite">
+            <p class="muted">尚无项目</p>
+          </div>
+          <details>
+            <summary>源文件缓存</summary>
+            <div id="media-cache" class="job-list"></div>
+          </details>
+        </section>
         <div id="alert" class="alert" role="alert" hidden></div>
         <div class="preview" id="preview">
           <div class="preview-empty" id="preview-empty">
@@ -215,12 +398,108 @@
           <div class="subtitle-preview" id="subtitle-preview" hidden></div>
           <div class="preview-tag">本地预览</div>
         </div>
+        <section class="editor-tools" aria-label="校对工具">
+          <div class="toolbar">
+            <label>查找<input id="find-text" placeholder="查找原文" /></label
+            ><label
+              >替换为<input id="replace-text" placeholder="替换文字" /></label
+            ><button id="find-next" class="secondary" type="button">
+              下一处</button
+            ><button id="replace-all" class="secondary" type="button" disabled>
+              全部替换</button
+            ><label
+              >时间偏移 / 秒<input
+                id="time-offset"
+                type="number"
+                step="0.1"
+                value="0" /></label
+            ><button id="shift-all" class="secondary" type="button" disabled>
+              整体偏移
+            </button>
+          </div>
+          <div class="toolbar">
+            <button id="redo" class="secondary" type="button" disabled>
+              重做</button
+            ><button
+              id="loop-cue"
+              class="secondary"
+              type="button"
+              disabled
+              aria-pressed="false"
+            >
+              循环当前句</button
+            ><label
+              >播放速度<select id="playback-speed">
+                <option value="0.5">0.5×</option>
+                <option value="0.75">0.75×</option>
+                <option value="1" selected>1×</option>
+                <option value="1.25">1.25×</option>
+                <option value="1.5">1.5×</option>
+                <option value="2">2×</option>
+              </select></label
+            ><label
+              >时间轴缩放<input
+                id="timeline-zoom"
+                type="range"
+                min="1"
+                max="20"
+                value="1" /></label
+            ><span id="waveform-status" class="muted" role="status"></span>
+          </div>
+          <p class="muted">
+            拖动字幕块移动时间，拖动两端调整边界；点击波形定位。左右箭头切换字幕，空格播放。
+          </p>
+          <details>
+            <summary id="quality-summary">字幕质量检查</summary>
+            <div id="quality-list" class="quality-list"></div>
+          </details>
+        </section>
+        <section class="delivery-tools" aria-label="翻译与视频导出">
+          <div class="toolbar">
+            <label
+              >目标语言<input
+                id="target-language"
+                value="en"
+                placeholder="例如 en / zh / ja"
+                maxlength="80" /></label
+            ><label
+              >翻译模型<input
+                id="translation-model"
+                value="gpt-4o-mini"
+                maxlength="100" /></label
+            ><button id="translate" class="secondary" type="button" disabled>
+              翻译字幕</button
+            ><button id="burn-video" class="secondary" type="button" disabled>
+              导出烧录视频</button
+            ><button id="soft-video" class="secondary" type="button" disabled>
+              封装字幕轨</button
+            ><button
+              id="operation-cancel"
+              class="secondary"
+              type="button"
+              hidden
+            >
+              取消操作
+            </button>
+          </div>
+          <p class="muted">
+            翻译会向配置的 OpenAI 服务发送字幕文本并使用 API
+            额度。视频导出使用已保存的字幕和样式。
+          </p>
+          <p id="operation-status" role="status" aria-live="polite"></p>
+          <div id="video-downloads" class="toolbar"></div>
+        </section>
         <div class="timeline" id="timeline" aria-label="字幕时间轴">
           <div class="timeline-axis">
             <span>00:00</span><span id="timeline-end">--:--</span>
           </div>
-          <div class="timeline-lane" id="timeline-lane">
-            <span class="timeline-empty">生成后在这里查看字幕分布</span>
+          <div class="timeline-scroll" id="timeline-scroll">
+            <div class="timeline-content" id="timeline-content">
+              <canvas id="waveform" height="70" aria-label="音频波形"></canvas>
+              <div class="timeline-lane" id="timeline-lane">
+                <span class="timeline-empty">生成后在这里查看字幕分布</span>
+              </div>
+            </div>
           </div>
         </div>
         <div class="task-progress" id="task-progress" hidden>

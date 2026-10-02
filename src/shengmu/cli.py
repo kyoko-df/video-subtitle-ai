@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from threading import Timer
@@ -54,6 +55,12 @@ def parser() -> argparse.ArgumentParser:
     convert.add_argument("--output-dir", type=Path, default=Path("subtitles"))
     convert.add_argument("--overwrite", action="store_true")
     gui = commands.add_parser("gui", help="启动本地浏览器图形界面")
+    gui.add_argument(
+        "--workspace",
+        type=Path,
+        default=Path(os.environ.get("SHENGMU_WORKSPACE", ".shengmu/workspace")),
+        help="持久项目目录",
+    )
     gui.add_argument("--port", type=int, default=8765)
     gui.add_argument("--no-browser", action="store_true", help="仅启动服务，不自动打开浏览器")
     commands.add_parser("doctor", help="检查工具和 AI 引擎是否已安装")
@@ -100,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
                 timer.start()
             print(f"声幕 GUI：http://127.0.0.1:{args.port}（Ctrl+C 停止）")
             uvicorn.run(
-                create_app(),
+                create_app(workspace_dir=args.workspace.expanduser().resolve()),
                 host="127.0.0.1",
                 port=args.port,
                 log_level="info" if args.verbose else "warning",

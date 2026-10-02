@@ -4,14 +4,14 @@ import os
 import sys
 import wave
 from array import array
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Event, RLock
 from typing import Callable, Protocol
 
-from .captions import is_hallucination, split_caption
+from .captions import CaptionOptions, is_hallucination, split_caption
 from .media import check_cancel
-from .models import Segment, SubtitleError
+from .models import Segment, SubtitleError, shift_segment
 
 Progress = Callable[[float, str], None]
 
@@ -27,6 +27,9 @@ class EngineOptions:
     chunk_seconds: int = 600
     condition_on_previous_text: bool = False
     filter_hallucinations: bool = True
+    captions: CaptionOptions = field(default_factory=CaptionOptions)
+    diarize: bool = False
+    num_speakers: int | None = None
 
     @property
     def initial_prompt(self) -> str | None:
@@ -37,6 +40,7 @@ class EngineOptions:
         return None
 
     def validate(self) -> None:
+        self.captions.validate()
         if self.engine not in ("local", "openai"):
             raise SubtitleError("转写引擎必须是 local 或 openai。")
         if not 30 <= self.chunk_seconds <= 600:
@@ -111,6 +115,7 @@ class LocalEngine:
                             segment.end,
                             segment.text,
                             getattr(segment, "words", None),
+                            options.captions,
                         )
                     )
                 progress(min(0.99, segment.end / duration), "正在识别语音…")
@@ -239,8 +244,8 @@ class OpenAIEngine:
                     start = max(0.0, float(segment.start))
                     end = min(duration, float(segment.end))
                     words = [w for w in response_words if start <= (w.start + w.end) / 2 < end]
-                    for cue in split_caption(start, end, segment.text, words):
-                        current.append(Segment(cue.start + offset, cue.end + offset, cue.text))
+                    for cue in split_caption(start, end, segment.text, words, options.captions):
+                        current.append(shift_segment(cue, offset))
                 result.extend(current)
                 if current:
                     context = " ".join(c.text.replace("\n", " ") for c in current)[-400:]

@@ -978,3 +978,248 @@ video {
     scroll-behavior: auto !important;
   }
 }
+
+/* Project workspace and editing tools share the existing muted studio palette. */
+.project-panel,
+.editor-tools,
+.delivery-tools {
+  margin: 18px 0;
+  border-bottom: 1px solid var(--line, #deded4);
+  padding-bottom: 16px;
+}
+.panel-heading,
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.panel-heading {
+  justify-content: space-between;
+  margin-bottom: 9px;
+}
+.panel-heading h3 {
+  font-size: 14px;
+}
+.toolbar {
+  margin: 8px 0;
+}
+.toolbar label {
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  color: #70786e;
+}
+.toolbar input:not([type="range"]),
+.toolbar select {
+  border: 1px solid #d4d7cd;
+  background: #fff;
+  border-radius: 4px;
+  padding: 7px;
+  width: 140px;
+  max-width: 100%;
+  font: inherit;
+}
+.toolbar input[type="number"] {
+  width: 95px;
+}
+.toolbar .secondary,
+.panel-heading .secondary {
+  padding: 7px 10px;
+  font-size: 11px;
+  text-decoration: none;
+}
+.job-list {
+  max-height: 180px;
+  overflow: auto;
+}
+.job-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 5px 0;
+  border-bottom: 1px solid #e6e8df;
+}
+.job-row.selected {
+  background: #e9efe9;
+}
+.job-row .secondary {
+  padding: 5px 8px;
+  font-size: 10px;
+}
+.job-row .job-open {
+  flex: 1;
+  text-align: left;
+  min-width: 180px;
+  overflow-wrap: anywhere;
+}
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin: 12px 0;
+}
+.settings-grid label,
+.settings-section details > label {
+  display: grid;
+  gap: 5px;
+  font-size: 11px;
+  color: #70786e;
+}
+.settings-grid input,
+.settings-grid select,
+#num-speakers {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #d4d7cd;
+  border-radius: 4px;
+  padding: 7px;
+  background: #fff;
+  font: inherit;
+}
+.settings-section details {
+  padding: 9px 0;
+}
+.settings-section summary,
+.editor-tools summary {
+  cursor: pointer;
+  font-size: 12px;
+}
+.model-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 5px;
+  font-size: 11px;
+  padding: 5px 0;
+}
+.model-row small {
+  flex-basis: 100%;
+  color: #b45030;
+}
+.model-row button {
+  padding: 4px 7px;
+  font-size: 10px;
+}
+.quality-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+  max-height: 160px;
+  overflow: auto;
+}
+.quality-list button {
+  padding: 5px 8px;
+  font-size: 10px;
+}
+.cue-row.has-issue {
+  border-left: 2px solid #d4a473;
+}
+.cue-content {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+.cue-content .cue-text {
+  width: 100%;
+}
+.cue-speaker {
+  max-width: 160px;
+  width: 100%;
+  font-size: 10px;
+  border: 0;
+  border-bottom: 1px solid #dce1d7;
+  background: transparent;
+  padding: 3px;
+}
+.cue-translation {
+  resize: vertical;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #dce1d7;
+  border-radius: 4px;
+  padding: 6px;
+  background: #f3f6ee;
+  color: #536957;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.timeline-scroll {
+  overflow-x: auto;
+}
+.timeline-content {
+  position: relative;
+  min-width: 100%;
+}
+#waveform {
+  width: 100%;
+  height: 70px;
+  display: block;
+  cursor: crosshair;
+}
+.timeline-cue {
+  touch-action: none;
+  cursor: grab;
+}
+.timeline-cue::before,
+.timeline-cue::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: #768e76;
+}
+.timeline-cue::before {
+  left: 3px;
+}
+.timeline-cue::after {
+  right: 3px;
+}
+.preview-word.spoken {
+  color: #ffcd69;
+  text-shadow: 0 1px 3px #000;
+}
+#loop-cue[aria-pressed="true"] {
+  border-color: #809b80;
+  background: #e2ece0;
+}
+#operation-status {
+  font-size: 12px;
+  color: #64765e;
+}
+@media (max-width: 640px) {
+  .toolbar {
+    align-items: end;
+    gap: 7px;
+  }
+  .toolbar label {
+    max-width: 46%;
+  }
+  .job-row .job-open {
+    min-width: 150px;
+  }
+  .cue-content {
+    grid-column: 1 / -1;
+  }
+  .settings-grid {
+    gap: 10px;
+  }
+}
+
+@media (max-width: 640px) {
+  .cue-content {
+    grid-row: 2;
+  }
+  .cue-actions {
+    grid-column: 4;
+    grid-row: 1;
+  }
+  .cue-time {
+    grid-column: 2 / 4;
+  }
+}

@@ -9,7 +9,7 @@ from typing import Callable
 from .engines import Engine, EngineOptions, get_engine
 from .exporters import export_files, output_paths
 from .media import check_cancel, extract_audio, probe
-from .models import Segment, SubtitleError, Transcript, normalize_segments
+from .models import SubtitleError, Transcript, normalize_segments, shift_segment
 
 StageProgress = Callable[[str, float, str], None]
 
@@ -47,12 +47,14 @@ def transcribe(
             cancel,
         )
         check_cancel(cancel)
+        if options.diarize:
+            from .speakers import diarize
+
+            update("transcribe", 0.92, "正在区分说话人…")
+            segments = diarize(audio, segments, options.num_speakers, cancel)
         # WAV starts at zero. Restore a delayed track's offset on the container timeline.
         offset = next(track.offset for track in info.audio_tracks if track.index == track_index)
-        aligned = [
-            Segment(s.start + offset, s.end + offset, s.text)
-            for s in normalize_segments(segments, audio_duration)
-        ]
+        aligned = [shift_segment(s, offset) for s in normalize_segments(segments, audio_duration)]
         timeline_duration = max(info.duration, audio_duration + offset)
         transcript = Transcript(
             source.name,

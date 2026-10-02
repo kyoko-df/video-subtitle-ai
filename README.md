@@ -13,7 +13,10 @@
 - 按词级时间戳重新切分字幕，优先在标点处断开；中文 / 日文每行最多 20 字符，其他语言每行最多 42 字符，每条最多 2 行、7 秒。
 - OpenAI `whisper-1` 转写，请求词级和片段时间戳；长音频按最多 600 秒分块，优先在边界前 5 秒内的静音处切分，下一块携带前文提示。
 - 导出 **SRT、WebVTT、ASS、TXT、JSON**；TXT 为纯文本，其余保留时间信息。
-- GUI 支持拖放文件、音轨选择、进度显示、取消、视频字幕预览、修改文本 / 时间、新增、拆分、合并、删除、撤销和重新导出；替换文件时释放旧上传。
+- GUI 支持拖放文件、批量转写、任务历史 / 重试 / ZIP 下载、项目持久化和自动草稿恢复。
+- 预览与校对支持新增 / 拆分 / 合并 / 删除 / 撤销 / 重做、查找替换、循环播放、播放速度、整体偏移、波形定位、时间轴缩放与拖动调时。
+- 自定义排版规则与质量提示，字幕样式、双语字幕、说话人标注、逐词高亮，以及烧录视频 / 可切换字幕轨导出。
+- 可选 OpenAI 文本翻译与本地 pyannote 说话人识别；模型下载、进度、管理和常用配置。
 - CLI 支持转写、查看音轨、JSON 格式转换和环境检查；拒绝意外覆盖输出或输入文件。
 - GUI 仅监听本机地址；API Key 从服务器环境变量读取，前端不会收到 Key。
 
@@ -75,13 +78,40 @@ shengmu gui
 shengmu gui --port 9000 --no-browser
 ```
 
-GUI 是运行在本机的浏览器应用，文件上传到本机临时目录；本地模式不会上传音频到 AI 服务。单个文件上限为 2 GB，较大的视频使用 CLI 直接处理。模型首次下载需要网络，下载后可离线使用。浏览器不支持某个视频编码时仍能转写，但无法在 GUI 中播放该视频。
+GUI 是运行在本机的浏览器应用，文件上传到本机项目目录；本地模式不会上传音频到 AI 服务。单个文件上限为 2 GB，较大的视频使用 CLI 直接处理。模型首次下载需要网络，下载后可离线使用。浏览器不支持某个视频编码时仍能转写，但无法在 GUI 中播放该视频。
 
-GUI 的文件、任务和编辑结果保存在当前服务会话，停止服务后会清理，务必先下载字幕。会话最多保留 30 个源文件、100 个任务；所有上传合计最多 4 GB，包含正在上传的文件。最多 5 个任务处理中或排队，实际转写串行运行，避免模型争用内存。替换文件会立即删除旧上传，也可点击“释放源文件缓存”；保留已完成任务的字幕和下载，但不允许删除仍用于活动任务的文件。超过 24 小时的已完成结果与不再使用的上传会在后续上传或创建任务时清理。
+GUI 默认把项目、上传源文件、字幕和草稿保存在当前目录的 `.shengmu/workspace`，停止和重启服务后仍可从任务列表继续校对。用 `shengmu gui --workspace /path/to/projects` 或 `SHENGMU_WORKSPACE` 更改目录；同一项目目录只允许一个服务进程。处理中断的任务会标记为失败，可在任务列表重试。
+
+最多保留 30 个源文件、100 个任务；上传源文件合计最多 4 GB，包含正在上传的文件。最多 5 个转写任务处理中或排队，处理串行运行。更换文件会保留旧项目；在“源文件缓存”中释放不用的源文件，或删除旧任务腾出任务名额。持久项目不会自动过期。释放源文件后保留已完成字幕，但无法播放、重试或导出视频；字幕、视频、模型和波形缓存另占磁盘空间。
 
 字幕编辑：点击“新增”在播放位置之后的空白区间插入字幕；将文字光标放在字幕中间后点击“拆”，优先使用字幕内的当前播放时间，否则按文字比例分配时间；“并”合并下一条。撤销保留最近 100 次操作，支持在文本输入框外按 Ctrl / Cmd + Z。修改时间或文本只更新相关行与时间轴块；播放定位使用缓存及二分查找。
 
 GUI 模型只允许 `tiny`、`base`、`small`、`medium`、`large-v3` 和 `turbo`；自定义模型目录或仓库请使用 CLI。
+
+### 工作台新功能
+
+- **自动草稿**：编辑后约 0.7 秒保存草稿，同时保留浏览器本地备份以应对断连。刷新或重启后恢复草稿；“保存并导出”才更新可下载字幕。多页面编辑通过版本号防止旧页面覆盖新版本，冲突时重新打开项目。撤销 / 重做历史仅保留在当前页面。
+- **批量与历史**：“批量添加并转写”使用当前配置及各文件第一条音轨。队列满时等待空位；“停止添加”停止后续上传，已排队任务继续。任务列表可重新打开、取消、重试和删除。ZIP 包含已完成任务最近保存的字幕，各任务使用独立子目录。
+- **校对**：文字查找替换使用精确匹配；整体时间偏移同时移动词时间，越界会拒绝。循环当前句、0.5–2× 播放、左右箭头切换字幕和空格播放均可用。波形基于所选音轨并恢复轨道偏移；拖字幕块移动整条、拖两端改变边界。文字修改、拆分及边界调整会清除不再有效的词对齐；文字修改会清除对应旧译文。
+- **排版与质检**：设置 CJK / 其他语言每行长度、最多行数、最短 / 最长秒数和每秒字数。质检对原文和译文提示过长、过短、阅读过快及重叠，点击提示定位。重新排版沿用词时间切分；重新切开的字幕会清除译文，需要重新翻译。
+- **样式与视频**：字体、字号、颜色、位置和边距用于预览、ASS 和烧录。导出内容可选原文 / 译文 / 双语，可显示说话人名称。烧录视频编码为 H.264 / AAC；封装字幕轨复制原视频编码、转换音频为 AAC，字幕为 MP4 mov_text。源视频编码若无法封装到 MP4，会给出 FFmpeg 错误，可改用烧录。两种方式保留原媒体全部音轨，长视频导出可取消。
+- **逐词高亮**：保存真实词时间戳；缺失对齐时使用带 `estimated=true` 标记的估算时间。原文预览与 ASS / 烧录支持逐词高亮；译文不伪造词级对齐。手动改文后高亮会退回整句，重新识别可恢复。
+- **模型**：展示模型是否可用、磁盘大小及下载进度。下载固定官方 / 已知 CTranslate2 仓库的指定版本，并可续传。管理器可删除其下载的模型；已有共享 Hugging Face 缓存只显示为可用，避免删除其他程序共享的模型。使用中的本地模型禁止删除。保存常用配置后下次启动自动加载。
+
+### 翻译和自动说话人识别
+
+翻译使用服务器已有 `OPENAI_API_KEY` / `OPENAI_BASE_URL`，通过 Responses API 的严格 JSON Schema 输出，按字幕编号核对结果，不修改原文或时间。默认文本模型为 `gpt-4o-mini`，可在界面更改。兼容服务需支持 **Responses / Structured Outputs**；转写兼容接口本身不代表支持翻译。字幕文本会发送到服务并使用 API 额度，分批全部成功才更新字幕；失败或取消保留原字幕。也可直接手动填写 / 修改译文。
+
+自动区分说话人是额外依赖，建议独立 Python 3.11 / 3.12 环境：
+
+```bash
+python -m pip install -e ".[local,openai,diarization]"
+export HF_TOKEN="你的 Hugging Face Token"
+shengmu gui
+```
+
+首次使用需在 [Community-1 模型页面](https://huggingface.co/pyannote/speaker-diarization-community-1) 接受访问条款，然后由程序下载模型并在本机推理；本项目不会代你接受条款。也可设置 `SHENGMU_DIARIZATION_MODEL=/path/to/community-1` 使用离线模型目录。已知人数时可填写说话人数，程序按词时间和说话人区间切分字幕；名称可在校对行中修改。未安装引擎或未配置权限时会给出具体提示，普通转写和手动标注仍可使用。基础 `[all]` 不含体积较大的 pyannote / PyTorch。
+
 
 ## CLI
 
@@ -166,7 +196,7 @@ shengmu transcribe video.mp4 --format srt --overwrite
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "source": "video.mp4",
   "duration": 10.0,
   "language": "zh",
@@ -177,7 +207,7 @@ shengmu transcribe video.mp4 --format srt --overwrite
 }
 ```
 
-SRT / VTT 精度为毫秒，ASS 精度为百分之一秒。识别结果会重新切成适合显示的短字幕，不包含翻译、说话人分离或逐词高亮。**数据模型不支持重叠字幕**，包括两人同时说话的独立字幕轨：识别边界重叠会被规整，GUI 手动编辑会拒绝重叠。SRT 保留 `AT&T` 等原始文本，不做 HTML 转义；VTT 转义标记字符。ASS 样式字符会转换为全角字符，避免识别文本被误当作样式指令。
+SRT / VTT 精度为毫秒，ASS 精度为百分之一秒。JSON v2 保留 `words`（start / end / text / estimated）、`speaker` 和 `translation`，兼容读取 v1。默认拒绝重叠字幕，勾选“允许重叠语音字幕”后可保存按开始时间排序的重叠字幕；识别边界仍默认规整。说话人识别区分发言者，不会分离同时发声的声源或恢复被覆盖的对话。SRT 保留 `AT&T` 等原始文本，不做 HTML 转义；VTT 转义标记字符。ASS 样式字符会转换为全角字符，避免识别文本被误当作样式指令。
 
 ## 项目结构
 
@@ -209,6 +239,7 @@ ruff format --check .
 node --test tests/test_editor.cjs
 node --check src/shengmu/web/app.js
 node --check src/shengmu/web/editor.js
+node --check src/shengmu/web/studio.js
 python -m build
 ```
 
@@ -219,7 +250,7 @@ GitHub Actions 在 Ubuntu、macOS、Windows × Python 3.10 / 3.12 上安装 FFmp
 ## 实用边界
 
 - 取消任务是协作式的：FFmpeg 可直接停止；本地模型加载 / 推理和已发出的 API 请求需等当前操作返回。已经开始的云请求可能计费。
-- 首版为单用户本地工具，不适合作为公网多用户服务。没有持久任务数据库；CLI 输出持久保存在指定目录。
+- 单用户本地工具，不适合作为公网多用户服务。GUI 使用原子写入的本地项目记录，CLI 输出保存在指定目录。
 - 对音乐、口音、多人重叠语音和噪声较大的音频，字幕准确度及时间对齐仍需人工校对。
 - 音轨起始偏移会恢复到视频时间轴；特殊时间戳断续或损坏的媒体建议先转换为常规格式。
 
@@ -290,7 +321,7 @@ The GUI labels remain in Chinese; this README is available in three languages. `
 
 Use `shengmu gui --port 9000 --no-browser` to change the port or skip opening a browser. Unsupported browser codecs do not prevent transcription, but cannot be previewed.
 
-GUI uploads stay in a local temporary directory: **2 GB per file, 4 GB total uploaded source storage**, including in-flight uploads; up to 30 source files, 100 jobs, and five active / queued jobs. Transcription runs serially. Replacing a source deletes its old upload; “释放源文件缓存” releases it manually. Active-job sources cannot be deleted. Finished subtitles remain editable and downloadable after release. Results and unused sources expire after 24 hours when another upload or job triggers cleanup. Stopping the service removes session data: download your results first.
+GUI projects and uploads persist in `.shengmu/workspace` (override with `--workspace` or `SHENGMU_WORKSPACE`): **2 GB per file, 4 GB total uploaded source storage**, including in-flight uploads; up to 30 source files, 100 jobs, and five active / queued jobs. Transcription runs serially. Replacing a source preserves the previous project; “释放源文件缓存” releases it manually. Active-job sources cannot be deleted. Finished subtitles remain editable and downloadable after release. Projects do not expire and survive server restarts. Drafts autosave after edits; explicit save updates downloads. Interrupted tasks can be retried. Use the source cache list and delete completed tasks to free capacity.
 
 “新增” inserts a cue into free time at or after the playback position. Place the text cursor inside a cue and press “拆” to split: use the current playback time if inside the cue, otherwise estimate by text position. “并” merges with the next cue. “撤销” restores the last operation, up to 100 operations; Ctrl / Cmd + Z works outside editable fields. “保存并导出” updates downloads. GUI models are restricted to `tiny`, `base`, `small`, `medium`, `large-v3`, and `turbo`; use the CLI for custom model paths or repositories.
 
@@ -332,9 +363,9 @@ Short speech is not artificially extended to one second. Missing / invalid word 
 
 JSON uses schema version 1 and timestamps in seconds; it can be edited and re-exported without the original media or another AI request. SRT / VTT use milliseconds, ASS uses centiseconds, and TXT has no timestamps. SRT retains raw text such as `AT&T`; VTT escapes markup; ASS style-control characters are neutralized.
 
-**Overlapping captions are not supported**, including separate simultaneous-speaker cues. ASR overlaps are normalized, and manual overlaps are rejected. No translation, speaker diarization, or word highlighting is provided. Music, accents, noisy recordings, and overlapping speech require proofreading. Delayed audio offsets are restored; damaged or discontinuous media timestamps may need conversion first.
+GUI includes batch jobs, project history, ZIP downloads, draft recovery, find/replace, redo, loop playback, waveform timing, custom layout/quality checks, subtitle styles, bilingual editing, video burn-in and MP4 subtitle tracks. Optional translation uses OpenAI Responses / Structured Outputs; optional diarization uses pyannote Community-1 (install `[diarization]`, configure `HF_TOKEN` after accepting model conditions). JSON v2 stores word timing, speaker and translation and reads v1. Word highlighting supports original captions; estimated timing is marked. ASR overlaps are normalized, while manual overlaps can be enabled explicitly; diarization does not separate overlapping voices. Music, accents, noisy recordings, and overlapping speech require proofreading. Delayed audio offsets are restored; damaged or discontinuous media timestamps may need conversion first.
 
-Cancellation is cooperative: FFmpeg can stop immediately, while model loading / inference or an in-flight API request must return first. Already-sent requests may be billed. This is a single-user local tool, not a public multi-user service; CLI outputs persist, GUI session data does not.
+Cancellation is cooperative: FFmpeg can stop immediately, while model loading / inference or an in-flight API request must return first. Already-sent requests may be billed. This is a single-user local tool, not a public multi-user service; CLI outputs and GUI projects both persist. The model manager can download/resume/remove managed models and show existing shared cache availability; common settings can be saved.
 
 ```bash
 python -m pip install -e ".[all,dev]"
@@ -344,6 +375,7 @@ ruff format --check .
 node --test tests/test_editor.cjs
 node --check src/shengmu/web/app.js
 node --check src/shengmu/web/editor.js
+node --check src/shengmu/web/studio.js
 python -m build
 ```
 
@@ -411,9 +443,9 @@ shengmu gui
 
 プロジェクトの `.venv` にインストール済みなら、macOS の `start-gui.command` または Windows の `start-gui.bat` をダブルクリックして起動できます。これらは `SHENGMU_MODEL_DIR` が未設定の場合、プロジェクト内の `models` をキャッシュに使用します。`shengmu gui --port 9000 --no-browser` でポート変更 / ブラウザー自動起動の無効化ができます。ブラウザー非対応のコーデックでも文字起こしは可能ですが、動画プレビューはできません。
 
-アップロード先は本機の一時ディレクトリです。**1 ファイル 2 GB、アップロード元ファイルの合計 4 GB**（アップロード中も含む）、最大 30 ファイル・100 タスク、処理中 / 待機中は最大 5 タスクです。文字起こしは直列実行します。ファイルの変更時は古いアップロードを削除し、「释放源文件缓存」で手動解放もできます。処理中のタスクが使用するファイルは削除できません。解放後も完成済み字幕の編集とダウンロードは可能です。
+プロジェクトとアップロードは本機の `.shengmu/workspace` に保存します。`--workspace` または `SHENGMU_WORKSPACE` で変更できます。**1 ファイル 2 GB、アップロード元ファイルの合計 4 GB**（アップロード中も含む）、最大 30 ファイル・100 タスク、処理中 / 待機中は最大 5 タスクです。文字起こしは直列実行します。ファイルの変更時も以前のプロジェクトを保持し、「释放源文件缓存」で手動解放もできます。処理中のタスクが使用するファイルは削除できません。解放後も完成済み字幕の編集とダウンロードは可能です。
 
-24 時間以上経過した完了結果や未使用ファイルは、次のアップロード / タスク作成時に整理します。サービス停止時にはセッションデータを削除するため、先に字幕をダウンロードしてください。
+プロジェクトと自動保存した下書きはサービス再起動後も復元できます。中断タスクは再試行できます。不要な元ファイルや完了タスクは一覧から削除してください。
 
 GUI の表示言語は中国語です。「新增」で再生位置以降の空き時間に字幕を追加します。文字カーソルを字幕の途中に置き、「拆」で分割します。現在の再生位置が字幕内ならその時刻を使い、それ以外では文字数比で時間を配分します。「并」で次の字幕と結合、「撤销」で直近 100 操作まで元に戻します。入力欄の外では Ctrl / Cmd + Z も使えます。「保存并导出」でダウンロード内容を更新します。
 
@@ -461,9 +493,9 @@ PowerShell では `$env:OPENAI_API_KEY="自分の API キー"` を使います�
 
 JSON はスキーマバージョン 1、時間単位は秒です。元動画や AI の再実行なしで編集 / 再出力できます。SRT / VTT はミリ秒、ASS は 1/100 秒の精度、TXT は時間情報なしです。SRT は `AT&T` などの元テキストを保持し、VTT はマークアップをエスケープ、ASS はスタイル制御文字を無害化します。
 
-**重複する時間帯の字幕には対応していません**。複数話者の同時発話を独立した字幕として表現することもできません。認識結果の境界重複は調整し、手動編集の重複は拒否します。翻訳、話者分離、単語ハイライトは未対応です。音楽、訛り、雑音、同時発話では特に校正が必要です。音声開始オフセットは動画タイムラインに復元しますが、破損 / 不連続なタイムスタンプのメディアは事前変換を推奨します。
+バッチ処理、履歴、ZIP、自動下書き、検索置換、やり直し、ループ再生、波形・ドラッグ調整、レイアウト・品質確認、字幕スタイル、二言語字幕、焼き込み / MP4 字幕トラックを利用できます。翻訳は OpenAI Responses / Structured Outputs、任意の自動話者識別は pyannote Community-1（`[diarization]` とモデル利用条件への同意、`HF_TOKEN` が必要）を使用します。JSON v2 は単語時刻・話者・訳文を保持し、v1 も読み込めます。単語ハイライトは原文に対応し、推定時刻を明示します。手動編集の重複は設定で許可できます。自動話者識別は同時発話の音源分離ではありません。音楽、訛り、雑音、同時発話では特に校正が必要です。音声開始オフセットは動画タイムラインに復元しますが、破損 / 不連続なタイムスタンプのメディアは事前変換を推奨します。
 
-キャンセルは協調的です。FFmpeg は停止できますが、モデル読み込み / 推論や送信済み API リクエストは処理が戻るまで待つ必要があります。送信済みリクエストは課金される場合があります。本ツールはローカルの単一ユーザー向けで、公開マルチユーザーサービスではありません。CLI の出力は保存され、GUI のデータはセッション限りです。
+キャンセルは協調的です。FFmpeg は停止できますが、モデル読み込み / 推論や送信済み API リクエストは処理が戻るまで待つ必要があります。送信済みリクエストは課金される場合があります。本ツールはローカルの単一ユーザー向けで、公開マルチユーザーサービスではありません。CLI の出力は保存され、GUI のプロジェクトと下書きも保存されます。モデル管理ではダウンロード、再開、管理対象モデルの削除と共有キャッシュの確認が可能です。
 
 ```bash
 python -m pip install -e ".[all,dev]"
@@ -473,6 +505,7 @@ ruff format --check .
 node --test tests/test_editor.cjs
 node --check src/shengmu/web/app.js
 node --check src/shengmu/web/editor.js
+node --check src/shengmu/web/studio.js
 python -m build
 ```
 

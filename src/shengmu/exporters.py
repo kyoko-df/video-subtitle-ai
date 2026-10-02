@@ -25,6 +25,26 @@ def times(start: float, end: float, rate: int, separator: str) -> tuple[str, str
     return timestamp_ticks(a, rate, separator), timestamp_ticks(b, rate, separator)
 
 
+def display_text(segment, metadata):
+    mode = metadata.get("export_mode", "original")
+    if mode in {"translated", "bilingual"} and not segment.translation:
+        raise SubtitleError("存在未翻译字幕，请先翻译或补齐译文。")
+    text = (
+        segment.text
+        if mode == "original"
+        else segment.translation
+        if mode == "translated"
+        else segment.text + "\n" + segment.translation
+    )
+    if metadata.get("speaker_labels") and segment.speaker:
+        text = segment.speaker + ": " + text
+    return text
+
+
+def ass_text(text):
+    return text.replace("\\", "＼").replace("{", "｛").replace("}", "｝").replace("\n", r"\N")
+
+
 def render(transcript: Transcript, fmt: str) -> str:
     if fmt not in FORMATS:
         raise SubtitleError(f"不支持的字幕格式：{fmt}")
@@ -33,12 +53,16 @@ def render(transcript: Transcript, fmt: str) -> str:
             json.dumps(transcript.to_dict(), ensure_ascii=False, indent=2, allow_nan=False) + "\n"
         )
     if fmt == "txt":
-        return "\n".join(segment.text for segment in transcript.segments) + "\n"
+        return (
+            "\n".join(display_text(segment, transcript.metadata) for segment in transcript.segments)
+            + "\n"
+        )
     if fmt in ("srt", "vtt"):
         blocks = []
         for index, segment in enumerate(transcript.segments, 1):
             start, end = times(segment.start, segment.end, 1000, "," if fmt == "srt" else ".")
-            text = html.escape(segment.text, quote=False) if fmt == "vtt" else segment.text
+            text = display_text(segment, transcript.metadata)
+            text = html.escape(text, quote=False) if fmt == "vtt" else text
             blocks.append(f"{index}\n{start} --> {end}\n{text}\n")
         return ("WEBVTT\n\n" if fmt == "vtt" else "") + "\n".join(blocks)
     header = """[Script Info]
@@ -56,17 +80,53 @@ Style: Default,Arial,54,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
+    style = transcript.metadata.get("style", {})
+    font = str(style.get("font", "Arial"))
+    import re
+
+    if not re.fullmatch(r"[^,\r\n{}\\]{1,80}", font):
+        raise SubtitleError("字体名称无效。")
+    color = style.get("color", "#FFFFFF")
+    if not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
+        raise SubtitleError("字幕颜色无效。")
+    color = "&H00" + color[5:7] + color[3:5] + color[1:3]
+    size, margin = int(style.get("size", 54)), int(style.get("margin", 60))
+    if not 12 <= size <= 200 or not 0 <= margin <= 500:
+        raise SubtitleError("字幕样式参数无效。")
+    alignment = {"bottom": 2, "middle": 5, "top": 8}.get(style.get("position", "bottom"))
+    if alignment is None:
+        raise SubtitleError("字幕位置无效。")
+    header = header.replace(
+        "Style: Default,Arial,54,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,60,60,60,1",
+        f"Style: Default,{font},{size},{color},&H0000FFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,{alignment},60,60,{margin},1",
+    )
     lines = []
     for segment in transcript.segments:
         start, end = times(segment.start, segment.end, 100, ".")
-        # Full-width braces prevent transcription text from injecting ASS style overrides.
-        text = (
-            segment.text.replace("\\", "＼")
-            .replace("{", "｛")
-            .replace("}", "｝")
-            .replace("\n", r"\N")
-        )
-        lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}")
+        text = ass_text(display_text(segment, transcript.metadata))
+        if (
+            transcript.metadata.get("word_highlight")
+            and segment.words
+            and transcript.metadata.get("export_mode", "original") == "original"
+        ):
+            pieces = []
+            cursor = segment.start
+            if transcript.metadata.get("speaker_labels") and segment.speaker:
+                pieces.append(ass_text(segment.speaker + ": "))
+            for word in segment.words:
+                gap = max(0, round((word.start - cursor) * 100))
+                if gap:
+                    pieces.append(r"{\k" + str(gap) + "}")
+                pieces.append(
+                    r"{\kf"
+                    + str(max(1, round((word.end - word.start) * 100)))
+                    + "}"
+                    + ass_text(word.text)
+                )
+                cursor = word.end
+            text = "".join(pieces).strip()
+        speaker = ass_text(segment.speaker or "").replace(",", "，")
+        lines.append(f"Dialogue: 0,{start},{end},Default,{speaker},0,0,0,,{text}")
     return header + "\n".join(lines) + "\n"
 
 

@@ -51,5 +51,6 @@ jobs:
           node --test tests/test_editor.cjs
           node --check src/shengmu/web/app.js
           node --check src/shengmu/web/editor.js
+          node --check src/shengmu/web/studio.js
       - name: Build distribution
         run: python -m build
