@@ -66,6 +66,26 @@
           <div class="upload-progress" id="upload-progress" hidden>
             <div></div>
           </div>
+          <details class="linked-source">
+            <summary>直接读取本地 / SMB 视频</summary>
+            <p class="muted">
+              先在系统中连接共享，再填写完整视频路径。无需上传或复制视频，原文件保留在共享盘。
+            </p>
+            <label class="field">
+              视频路径
+              <input
+                id="source-path"
+                type="text"
+                placeholder="/Volumes/共享/视频.mp4 或 \\NAS\共享\视频.mp4"
+                autocomplete="off"
+                spellcheck="false"
+                maxlength="32768"
+              />
+            </label>
+            <button id="link-source" class="secondary" type="button">
+              直接读取视频
+            </button>
+          </details>
           <button
             id="release-source"
             class="secondary release-source"

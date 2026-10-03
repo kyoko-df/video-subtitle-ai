@@ -5,6 +5,7 @@ import logging
 import os
 import secrets
 import shutil
+import stat
 import tempfile
 import threading
 import time
@@ -142,6 +143,10 @@ class PreferencesRequest(BaseModel):
     target_language: str = Field(default="en", max_length=80)
 
 
+class LinkedMediaRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=32768)
+
+
 def atomic_json(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix=".save-", dir=path.parent)
@@ -162,6 +167,33 @@ class Media:
     info: MediaInfo
     size: int = 0
     created: float = field(default_factory=time.time)
+    linked: bool = False
+    fingerprint: tuple[int, int] | None = None
+    released: bool = False
+
+    @property
+    def available(self) -> bool:
+        if self.released:
+            return False
+        try:
+            current = self.path.stat()
+            return stat.S_ISREG(current.st_mode) and (
+                not self.linked or self.fingerprint == (current.st_size, current.st_mtime_ns)
+            )
+        except OSError:
+            return False
+
+    def public(self, media_id: str) -> dict:
+        return {
+            "id": media_id,
+            "name": self.name,
+            "size": self.size,
+            "linked": self.linked,
+            "source_path": str(self.path) if self.linked else None,
+            "available": self.available,
+            **self.info.to_dict(),
+            "url": f"/api/media/{media_id}/file",
+        }
 
 
 @dataclass
@@ -186,7 +218,8 @@ class Job:
         return {
             "id": self.id,
             "media_id": self.media_id,
-            "media_available": self.media.path.is_file(),
+            "media_available": self.media.available,
+            "media_linked": self.media.linked,
             "updated": self.updated,
             "revision": self.revision,
             "request": self.request.model_dump(),
@@ -233,13 +266,15 @@ class Workspace:
         if self.persistent:
             media = self.media[media_id]
             atomic_json(
-                media.path.parent / ".media.json",
+                self.root / media_id / ".media.json",
                 {
                     "id": media_id,
                     "name": media.name,
                     "size": media.size,
                     "filename": media.path.name,
                     "info": media.info.to_dict(),
+                    "linked_path": str(media.path) if media.linked else None,
+                    "fingerprint": media.fingerprint,
                 },
             )
 
@@ -254,6 +289,8 @@ class Workspace:
                         "name": job.media.name,
                         "filename": job.media.path.name,
                         "info": job.media.info.to_dict(),
+                        "linked_path": str(job.media.path) if job.media.linked else None,
+                        "fingerprint": job.media.fingerprint,
                     },
                 },
             )
@@ -264,6 +301,21 @@ class Workspace:
         def info(data):
             return MediaInfo(data["duration"], [AudioTrack(**t) for t in data["audio_tracks"]])
 
+        def restore_media(data, folder, released=False):
+            linked_path = data.get("linked_path")
+            path = Path(linked_path) if linked_path else folder / data["filename"]
+            if linked_path and not path.is_absolute():
+                raise ValueError("invalid linked path")
+            return Media(
+                path,
+                data["name"],
+                info(data["info"]),
+                data.get("size", 0),
+                linked=bool(linked_path),
+                fingerprint=tuple(data["fingerprint"]) if data.get("fingerprint") else None,
+                released=released,
+            )
+
         for manifest in self.root.glob("*/.media.json"):
             try:
                 data = json.loads(manifest.read_text(encoding="utf-8"))
@@ -272,11 +324,10 @@ class Workspace:
                     or data["id"] != manifest.parent.name
                 ):
                     raise ValueError("invalid manifest")
-                path = manifest.parent / data["filename"]
-                if path.is_file():
-                    self.media[data["id"]] = Media(
-                        path, data["name"], info(data["info"]), data["size"]
-                    )
+                media = restore_media(data, manifest.parent)
+                # A disconnected network share can become available again after reconnecting.
+                if media.linked or media.available:
+                    self.media[data["id"]] = media
             except (OSError, ValueError, KeyError, TypeError):
                 logger.error("无法恢复媒体记录 %s", manifest)
         for manifest in self.root.glob("*/.job.json"):
@@ -288,10 +339,8 @@ class Workspace:
                     or Path(data["media"]["filename"]).name != data["media"]["filename"]
                 ):
                     raise ValueError("invalid manifest")
-                media = self.media.get(data["media_id"]) or Media(
-                    self.root / data["media_id"] / data["media"]["filename"],
-                    data["media"]["name"],
-                    info(data["media"]["info"]),
+                media = self.media.get(data["media_id"]) or restore_media(
+                    data["media"], self.root / data["media_id"], released=True
                 )
                 job = Job(
                     data["id"],
@@ -410,7 +459,8 @@ class Workspace:
                 for job in self.jobs.values()
             ):
                 raise HTTPException(409, "文件仍用于排队或处理中的任务，暂时不能删除。")
-            shutil.rmtree(media.path.parent)
+            shutil.rmtree(self.root / media_id, ignore_errors=True)
+            media.released = True
             del self.media[media_id]
 
     def cleanup(self) -> None:
@@ -428,7 +478,8 @@ class Workspace:
             }
             for media_id, media in list(self.media.items()):
                 if media.created < cutoff and media.path not in referenced:
-                    shutil.rmtree(media.path.parent, ignore_errors=True)
+                    shutil.rmtree(self.root / media_id, ignore_errors=True)
+                    media.released = True
                     del self.media[media_id]
 
     def process(self, job: Job) -> None:
@@ -438,6 +489,8 @@ class Workspace:
                 job.updated = time.time()
 
         try:
+            if not job.media.available:
+                raise SubtitleError("源文件无法读取或内容已变化，请重新连接共享并再次添加视频。")
             r = job.request
             result = transcribe(
                 job.media.path,
@@ -606,7 +659,7 @@ def create_app(
                     if size > max_upload:
                         raise HTTPException(413, "文件过大。请使用 CLI 直接处理本地文件。")
                     with workspace.lock:
-                        used = sum(m.size for m in workspace.media.values()) + sum(
+                        used = sum(m.size for m in workspace.media.values() if not m.linked) + sum(
                             workspace.upload_sizes.values()
                         )
                         if used + len(chunk) > max_storage:
@@ -622,12 +675,69 @@ def create_app(
                 workspace.media[media_id] = Media(path, filename, info, size)
                 workspace.upload_sizes.pop(media_id, None)
                 workspace.save_media(media_id)
-            return {"id": media_id, "name": filename, "size": size, **info.to_dict()}
+            return workspace.media[media_id].public(media_id)
         except BaseException as exc:
             await run_in_threadpool(shutil.rmtree, folder, ignore_errors=True)
             if isinstance(exc, SubtitleError):
                 raise HTTPException(400, str(exc)) from exc
             raise
+        finally:
+            with workspace.lock:
+                workspace.upload_sizes.pop(media_id, None)
+
+    @app.post("/api/media/link")
+    def link_media(data: LinkedMediaRequest):
+        workspace = app.state.workspace
+        workspace.cleanup()
+        value = data.path.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        if any(ord(char) < 32 for char in value):
+            raise HTTPException(400, "路径包含无效字符。")
+        if value.lower().startswith("smb://"):
+            raise HTTPException(
+                400, "请先在系统中连接 SMB 共享，再填写挂载路径或 Windows 共享路径。"
+            )
+        path = Path(value).expanduser()
+        if not path.is_absolute():
+            raise HTTPException(
+                400, "请填写完整文件路径；Mac 使用 /Volumes/…，Windows 使用共享路径或盘符。"
+            )
+        media_id = uuid.uuid4().hex
+        with workspace.lock:
+            if len(workspace.media) + len(workspace.upload_sizes) >= 30:
+                raise HTTPException(429, "已达到 30 个源文件，请移除旧引用或释放上传缓存。")
+            workspace.upload_sizes[media_id] = 0
+        try:
+            path = path.resolve()
+            initial = path.stat()
+            if not stat.S_ISREG(initial.st_mode) or initial.st_size == 0:
+                raise HTTPException(400, "请选择非空的视频或音频文件。")
+            with path.open("rb") as stream:
+                stream.read(1)
+            info = probe(path)
+            media = Media(
+                path,
+                path.name,
+                info,
+                initial.st_size,
+                linked=True,
+                fingerprint=(initial.st_size, initial.st_mtime_ns),
+            )
+            if not media.available:
+                raise HTTPException(409, "读取时源文件发生变化，请等待文件写入完成后重新添加。")
+            with workspace.lock:
+                workspace.media[media_id] = media
+                try:
+                    workspace.save_media(media_id)
+                except Exception:
+                    del workspace.media[media_id]
+                    raise
+            return media.public(media_id)
+        except (OSError, RuntimeError) as exc:
+            raise HTTPException(400, "无法读取文件，请检查共享连接、完整路径和读取权限。") from exc
+        except SubtitleError as exc:
+            raise HTTPException(400, str(exc)) from exc
         finally:
             with workspace.lock:
                 workspace.upload_sizes.pop(media_id, None)
@@ -645,6 +755,10 @@ def create_app(
             media = workspace.media.get(data.media_id)
             if not media:
                 raise HTTPException(404, "文件不存在，请重新选择。")
+            if not media.available:
+                raise HTTPException(
+                    409, "源文件无法读取或内容已变化，请重新连接共享并再次添加视频。"
+                )
             if data.export_mode != "original":
                 raise HTTPException(400, "生成时请选择原文，完成翻译后可导出译文或双语。")
             if not data.formats:
@@ -752,9 +866,7 @@ def create_app(
         with workspace.lock:
             return [
                 {
-                    "id": media_id,
-                    "name": media.name,
-                    "size": media.size,
+                    **media.public(media_id),
                     "active": any(
                         j.media_id == media_id
                         and (
@@ -774,19 +886,13 @@ def create_app(
             media = workspace.media.get(media_id)
             if not media:
                 raise HTTPException(404, "源文件已释放。")
-            return {
-                "id": media_id,
-                "name": media.name,
-                "size": media.size,
-                **media.info.to_dict(),
-                "url": f"/api/media/{media_id}/file",
-            }
+            return media.public(media_id)
 
     @app.get("/api/media/{media_id}/file")
     def media_file(media_id: str):
         media = app.state.workspace.media.get(media_id)
-        if not media or not media.path.is_file():
-            raise HTTPException(404, "源文件已释放。")
+        if not media or not media.available:
+            raise HTTPException(404, "源文件不可用，请检查共享连接；内容改变后需要重新添加视频。")
         return FileResponse(media.path)
 
     @app.get("/api/media/{media_id}/waveform")
@@ -796,10 +902,12 @@ def create_app(
             media = workspace.media.get(media_id)
             if not media:
                 raise HTTPException(404, "源文件已释放。")
+            if not media.available:
+                raise HTTPException(409, "源文件不可用，请检查共享连接并重新添加视频。")
             track = media.info.audio_tracks[0].index if track is None else track
             if track not in {t.index for t in media.info.audio_tracks}:
                 raise HTTPException(400, "音轨不存在。")
-            cache = media.path.parent / f".waveform-{track}.json"
+            cache = workspace.root / media_id / f".waveform-{track}.json"
             if cache.is_file():
                 return {
                     **json.loads(cache.read_text(encoding="utf-8")),
@@ -841,7 +949,7 @@ def create_app(
             job = workspace.get_job(job_id)
             if job.status not in {"error", "cancelled"}:
                 raise HTTPException(409, "只能重试失败或取消的任务。")
-            if not job.media.path.is_file() or job.media_id not in workspace.media:
+            if not job.media.available or job.media_id not in workspace.media:
                 raise HTTPException(409, "源文件已释放，无法重试。")
             if sum(j.status not in TERMINAL for j in workspace.jobs.values()) >= 5:
                 raise HTTPException(429, "最多允许 5 个任务等待或处理。")
@@ -952,8 +1060,8 @@ def create_app(
     def render_video(job_id: str, data: VideoRequest):
         workspace = app.state.workspace
         job = workspace.get_job(job_id)
-        if not job.media.path.is_file():
-            raise HTTPException(409, "视频导出需要源文件，请保留源文件缓存。")
+        if not job.media.available:
+            raise HTTPException(409, "视频导出需要可读取的源文件，请检查共享连接或源文件缓存。")
         return workspace.start_operation(
             job,
             data.mode,

@@ -78,11 +78,21 @@ shengmu gui
 shengmu gui --port 9000 --no-browser
 ```
 
-GUI 是运行在本机的浏览器应用，文件上传到本机项目目录；本地模式不会上传音频到 AI 服务。单个文件上限为 2 GB，较大的视频使用 CLI 直接处理。模型首次下载需要网络，下载后可离线使用。浏览器不支持某个视频编码时仍能转写，但无法在 GUI 中播放该视频。
+GUI 是运行在本机的浏览器应用，普通上传保存到本机项目目录；也可直接读取已连接的 SMB / 本地视频。本地模式不会上传音频到 AI 服务。单个上传文件上限为 2 GB，更大的视频可直接填写路径或使用 CLI。模型首次下载需要网络，下载后可离线使用。浏览器不支持某个视频编码时仍能转写，但无法在 GUI 中播放该视频。
 
 GUI 默认把项目、上传源文件、字幕和草稿保存在当前目录的 `.shengmu/workspace`，停止和重启服务后仍可从任务列表继续校对。用 `shengmu gui --workspace /path/to/projects` 或 `SHENGMU_WORKSPACE` 更改目录；同一项目目录只允许一个服务进程。处理中断的任务会标记为失败，可在任务列表重试。
 
 最多保留 30 个源文件、100 个任务；上传源文件合计最多 4 GB，包含正在上传的文件。最多 5 个转写任务处理中或排队，处理串行运行。更换文件会保留旧项目；在“源文件缓存”中释放不用的源文件，或删除旧任务腾出任务名额。持久项目不会自动过期。释放源文件后保留已完成字幕，但无法播放、重试或导出视频；字幕、视频、模型和波形缓存另占磁盘空间。
+
+### SMB / NAS 视频
+
+在“源文件 → 直接读取本地 / SMB 视频”中填写完整视频路径，点击“直接读取视频”。程序只保存路径引用，预览、音轨提取和视频导出直接读取源文件；字幕、草稿、波形缓存和导出视频保存到本机项目目录。源视频不复制到上传缓存，因此不受 2 GB 单文件 / 4 GB 上传空间限制，仍计入 30 个源文件名额；临时提取音频和导出视频需要本机可用空间。
+
+- **macOS**：先在 Finder 按 ⌘K，连接 `smb://服务器/共享名` 并登录，再填写挂载后的文件路径，例如 `/Volumes/共享名/视频.mp4`。可在 Finder 选中文件，按 ⌥⌘C 复制路径。连接方式见 [Apple 官方说明](https://support.apple.com/en-sg/guide/mac-help/mchlp1140/mac)。
+- **Windows**：先在文件资源管理器中连接并登录共享，再填写 `\\服务器\共享名\视频.mp4`，或映射盘路径 `Z:\视频.mp4`。使用启动本工具的同一系统账号连接共享，避免映射盘在其他账号 / 提权进程中不可见。路径格式见 [Microsoft 官方说明](https://learn.microsoft.com/dotnet/standard/io/file-path-formats)。
+- **Linux**：先用系统挂载 SMB 共享，再填写挂载点下的完整文件路径。
+
+账号密码由系统管理，工具不接收或保存 SMB 凭据，也不直接连接 `smb://` 地址。共享断开时仍可校对和下载已生成字幕；重新连接同一路径后恢复读取。源文件大小或修改时间改变时，旧引用停止读取，请再次添加视频以刷新音轨 / 时长。点击“移除视频引用”只删除本机引用和波形缓存，不删除共享盘或本地原视频。源文件列表可重新打开已有引用。
 
 字幕编辑：点击“新增”在播放位置之后的空白区间插入字幕；将文字光标放在字幕中间后点击“拆”，优先使用字幕内的当前播放时间，否则按文字比例分配时间；“并”合并下一条。撤销保留最近 100 次操作，支持在文本输入框外按 Ctrl / Cmd + Z。修改时间或文本只更新相关行与时间轴块；播放定位使用缓存及二分查找。
 
@@ -323,6 +333,8 @@ Use `shengmu gui --port 9000 --no-browser` to change the port or skip opening a 
 
 GUI projects and uploads persist in `.shengmu/workspace` (override with `--workspace` or `SHENGMU_WORKSPACE`): **2 GB per file, 4 GB total uploaded source storage**, including in-flight uploads; up to 30 source files, 100 jobs, and five active / queued jobs. Transcription runs serially. Replacing a source preserves the previous project; “释放源文件缓存” releases it manually. Active-job sources cannot be deleted. Finished subtitles remain editable and downloadable after release. Projects do not expire and survive server restarts. Drafts autosave after edits; explicit save updates downloads. Interrupted tasks can be retried. Use the source cache list and delete completed tasks to free capacity.
 
+For SMB / NAS videos, connect the share through the OS first, then enter its full file path under “直接读取本地 / SMB 视频”: `/Volumes/share/video.mp4` on macOS, `\\server\share\video.mp4` or a mapped drive on Windows, or a mounted path on Linux. The app reads the source directly without uploading a copy. Linked sources do not consume upload byte quotas, but count toward the 30-source limit. Credentials stay with the OS; raw `smb://` addresses are unsupported. Waveform caches and outputs stay in the local workspace; removing a reference never deletes the original file. Reconnect the same share/path to resume reading after a disconnection. Re-add a source if its size or modification time changes. Local temporary audio / output space is still required.
+
 “新增” inserts a cue into free time at or after the playback position. Place the text cursor inside a cue and press “拆” to split: use the current playback time if inside the cue, otherwise estimate by text position. “并” merges with the next cue. “撤销” restores the last operation, up to 100 operations; Ctrl / Cmd + Z works outside editable fields. “保存并导出” updates downloads. GUI models are restricted to `tiny`, `base`, `small`, `medium`, `large-v3`, and `turbo`; use the CLI for custom model paths or repositories.
 
 ### CLI examples
@@ -444,6 +456,8 @@ shengmu gui
 プロジェクトの `.venv` にインストール済みなら、macOS の `start-gui.command` または Windows の `start-gui.bat` をダブルクリックして起動できます。これらは `SHENGMU_MODEL_DIR` が未設定の場合、プロジェクト内の `models` をキャッシュに使用します。`shengmu gui --port 9000 --no-browser` でポート変更 / ブラウザー自動起動の無効化ができます。ブラウザー非対応のコーデックでも文字起こしは可能ですが、動画プレビューはできません。
 
 プロジェクトとアップロードは本機の `.shengmu/workspace` に保存します。`--workspace` または `SHENGMU_WORKSPACE` で変更できます。**1 ファイル 2 GB、アップロード元ファイルの合計 4 GB**（アップロード中も含む）、最大 30 ファイル・100 タスク、処理中 / 待機中は最大 5 タスクです。文字起こしは直列実行します。ファイルの変更時も以前のプロジェクトを保持し、「释放源文件缓存」で手動解放もできます。処理中のタスクが使用するファイルは削除できません。解放後も完成済み字幕の編集とダウンロードは可能です。
+
+SMB / NAS 動画は OS で共有に接続してから、「直接读取本地 / SMB 视频」にファイルの絶対パスを入力します。macOS は `/Volumes/共有/動画.mp4`、Windows は `\\server\share\video.mp4` またはネットワークドライブ、Linux はマウント先のパスです。動画をアップロードせず直接読み取り、参照は 30 ファイル制限に含めますが、アップロード容量を消費しません。認証は OS に任せ、`smb://` への直接接続は行いません。キャッシュと出力はローカルに保存し、参照を削除しても元動画は削除しません。同じ共有 / パスへの再接続で復旧し、サイズや更新時刻が変わった動画は再登録します。一時音声と出力のローカル空き容量は必要です。
 
 プロジェクトと自動保存した下書きはサービス再起動後も復元できます。中断タスクは再試行できます。不要な元ファイルや完了タスクは一覧から削除してください。
 

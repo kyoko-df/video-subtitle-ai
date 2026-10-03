@@ -80,6 +80,11 @@ function updateButtons() {
   $("undo").disabled = !editing || !state.history.length;
   $("release-source").disabled =
     !state.media || state.busy || state.saving || state.uploading;
+  $("link-source").disabled =
+    !state.config || state.busy || state.saving || state.uploading;
+  $("link-source").textContent = state.uploading
+    ? "正在读取文件…"
+    : "直接读取视频";
   $("dropzone").disabled = state.busy || state.saving;
   $("cancel").hidden = !state.busy || state.job?.status === "done";
   if (typeof updateStudioButtons === "function") updateStudioButtons(editing);
@@ -94,6 +99,7 @@ function updateButtons() {
   )) {
     input.disabled = state.saving || state.busy;
   }
+  $("source-path").disabled = state.busy || state.saving || state.uploading;
 }
 
 function switchEngine(engine) {
@@ -165,6 +171,8 @@ function resetResult() {
   state.cues = [];
   state.history = [];
   state.redo = [];
+  state.loop = null;
+  state.waveform = null;
   state.dirty = false;
   state.transcriptDuration = null;
   sessionStorage.removeItem("shengmu-job");
@@ -175,6 +183,75 @@ function resetResult() {
   renderTimeline();
   updateButtons();
 }
+
+function showSourceMedia(media) {
+  alertMessage();
+  state.media = media;
+  sessionStorage.setItem("shengmu-media", media.id);
+  if (state.previewUrl?.startsWith("blob:"))
+    URL.revokeObjectURL(state.previewUrl);
+  state.previewUrl = media.url;
+  $("video").src = media.url;
+  $("video").hidden = false;
+  $("preview-empty").hidden = true;
+  $("workspace-title").textContent = media.name;
+  $("file-label").textContent = media.name;
+  $("file-size").textContent = (media.size / 1024 ** 2).toFixed(1) + " MB";
+  $("source-path").value = media.source_path || "";
+  $("release-source").textContent = media.linked
+    ? "移除视频引用"
+    : "释放源文件缓存";
+  $("upload-hint").textContent = media.linked
+    ? "直接读取源文件 · 无上传副本"
+    : "已读取 · 点击更换文件";
+  $("track").replaceChildren(
+    ...media.audio_tracks.map((track) => {
+      const option = document.createElement("option");
+      option.value = track.index;
+      option.textContent = `音轨 ${track.index} · ${track.language} · ${track.channels} 声道`;
+      return option;
+    }),
+  );
+  $("duration").textContent = timeLabel(media.duration);
+  $("timeline-end").textContent = timeLabel(media.duration);
+}
+
+async function linkSource() {
+  if (state.busy || state.saving || state.uploading || !state.config) return;
+  const path = $("source-path").value.trim();
+  if (!path) {
+    alertMessage("请填写完整的视频路径。");
+    return;
+  }
+  state.uploading = true;
+  alertMessage();
+  updateButtons();
+  try {
+    await flushDraft();
+    const media = await api("/api/media/link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    resetResult();
+    showSourceMedia(media);
+    if (typeof loadWaveform === "function") loadWaveform(media);
+    if (typeof refreshHistory === "function") refreshHistory();
+  } catch (error) {
+    alertMessage(error.message);
+  } finally {
+    state.uploading = false;
+    updateButtons();
+  }
+}
+
+$("link-source").onclick = linkSource;
+$("source-path").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    linkSource();
+  }
+});
 
 function uploadRequest(file, sequence) {
   return new Promise((resolve, reject) => {
@@ -255,6 +332,8 @@ async function uploadFile(file) {
       return;
     }
     state.media = media;
+    $("source-path").value = "";
+    $("release-source").textContent = "释放源文件缓存";
     sessionStorage.setItem("shengmu-media", media.id);
     $("track").replaceChildren();
     for (const track of media.audio_tracks) {

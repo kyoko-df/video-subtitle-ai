@@ -219,24 +219,7 @@ async function loadProjectResult(job, transcript, sequence) {
     try {
       const media = await api("/api/media/" + job.media_id);
       if (sequence !== state.resultSequence) return;
-      state.media = media;
-      if (state.previewUrl?.startsWith("blob:"))
-        URL.revokeObjectURL(state.previewUrl);
-      state.previewUrl = media.url;
-      $("video").src = media.url;
-      $("video").hidden = false;
-      $("preview-empty").hidden = true;
-      $("file-label").textContent = media.name;
-      $("file-size").textContent =
-        (media.size / 1024 / 1024).toFixed(1) + " MB";
-      $("track").replaceChildren(
-        ...media.audio_tracks.map((track) => {
-          const option = document.createElement("option");
-          option.value = track.index;
-          option.textContent = `音轨 ${track.index} · ${track.language} · ${track.channels} 声道`;
-          return option;
-        }),
-      );
+      showSourceMedia(media);
       if (job.request.track != null) $("track").value = job.request.track;
       loadWaveform(media, job.request.track, sequence);
     } catch (error) {
@@ -249,7 +232,9 @@ async function loadProjectResult(job, transcript, sequence) {
     $("video").removeAttribute("src");
     $("video").hidden = true;
     $("preview-empty").hidden = false;
-    $("waveform-status").textContent = "源文件已释放，仍可编辑字幕";
+    $("waveform-status").textContent = job.media_linked
+      ? "源视频不可用，请重新连接共享；仍可编辑字幕"
+      : "源文件已释放，仍可编辑字幕";
   }
   $("duration").textContent = timeLabel(transcript.duration);
   switchEngine(state.engine);
@@ -385,7 +370,7 @@ async function refreshHistory() {
       );
       if (job.media_available && terminal.has(job.status))
         row.append(
-          makeButton("释放源文件", async () => {
+          makeButton(job.media_linked ? "移除引用" : "释放源文件", async () => {
             await releaseMedia(job.media_id);
             if (job.id === state.job?.id) await openProject(job.id);
             await refreshHistory();
@@ -399,11 +384,30 @@ async function refreshHistory() {
       const row = document.createElement("div");
       row.className = "job-row";
       const label = document.createElement("span");
-      label.textContent = `${media.name} · ${(media.size / 1024 ** 2).toFixed(1)} MB`;
+      label.textContent = `${media.name} · ${(media.size / 1024 ** 2).toFixed(1)} MB${media.linked ? " · 仅引用" : ""}${media.available ? "" : " · 源文件不可用"}`;
       row.append(label);
       row.append(
         makeButton(
-          "释放",
+          "打开",
+          async () => {
+            if (state.busy || state.saving || state.uploading) return;
+            await flushDraft();
+            const current = await api(`/api/media/${media.id}`);
+            if (!current.available)
+              throw new Error(
+                "源文件不可用，请重新连接共享；内容改变后需要重新添加视频。",
+              );
+            resetResult();
+            showSourceMedia(current);
+            loadWaveform(current);
+            updateButtons();
+          },
+          !media.available || state.busy || state.saving || state.uploading,
+        ),
+      );
+      row.append(
+        makeButton(
+          media.linked ? "移除引用" : "释放",
           async () => {
             await releaseMedia(media.id);
             if (state.media?.id === media.id) {

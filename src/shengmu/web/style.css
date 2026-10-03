@@ -1223,3 +1223,16 @@ video {
     grid-column: 2 / 4;
   }
 }
+.linked-source {
+  margin-top: 16px;
+}
+
+.linked-source p {
+  margin: 10px 0;
+  line-height: 1.6;
+}
+
+.linked-source input {
+  width: 100%;
+  min-width: 0;
+}
