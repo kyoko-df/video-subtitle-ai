@@ -6,10 +6,82 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import traceback
 from functools import lru_cache
+from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
+
+from .models import SubtitleError
+from .storage import copy_exclusive
+
+
+def output_capabilities(directory: Path) -> dict:
+    """Probe this filesystem with only our temporary files; never cache mount state."""
+    directory = Path(directory).expanduser().resolve()
+    result = {
+        "directory": str(directory),
+        "writable": False,
+        "atomic_replace": False,
+        "hard_link": False,
+        "exclusive_create": False,
+    }
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".shengmu-probe-", dir=directory) as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.write_bytes(b"shengmu output probe\n")
+            result["writable"] = True
+            replaced = root / "replaced"
+            replaced.write_bytes(b"old")
+            try:
+                os.replace(source, replaced)
+                result["atomic_replace"] = replaced.read_bytes() == b"shengmu output probe\n"
+                source = replaced
+            except OSError:
+                pass
+            try:
+                os.link(source, root / "linked")
+                result["hard_link"] = True
+            except OSError:
+                pass
+            try:
+                target = root / "exclusive"
+                copy_exclusive(source, target)
+                try:
+                    copy_exclusive(source, target)
+                except FileExistsError:
+                    result["exclusive_create"] = target.read_bytes() == source.read_bytes()
+            except OSError:
+                pass
+    except OSError:
+        result["writable"] = False
+        result["note"] = "输出目录无法写入或探测失败，请检查权限、可用空间和共享连接。"
+        return result
+    if not result["hard_link"] and result["exclusive_create"]:
+        result["note"] = (
+            "目录不支持硬链接；不覆盖导出将使用独占创建，复制过程中可能暂时看到不完整文件。"
+        )
+    elif not result["hard_link"]:
+        result["note"] = "目录不支持安全的不覆盖导出，请更换输出目录。"
+    elif not result["atomic_replace"]:
+        result["note"] = "目录不支持文件替换，无法使用覆盖导出。"
+    else:
+        result["note"] = "输出目录可用。"
+    return result
+
+
+def ensure_output_directory(directory: Path, overwrite=False):
+    capabilities = output_capabilities(directory)
+    if not capabilities["writable"]:
+        raise SubtitleError(capabilities["note"])
+    if overwrite and not capabilities["atomic_replace"]:
+        raise SubtitleError("输出目录不支持文件替换，请更换目录后再使用覆盖导出。")
+    if not overwrite and not (capabilities["hard_link"] or capabilities["exclusive_create"]):
+        raise SubtitleError("输出目录不支持安全的不覆盖导出，请检查权限或更换目录。")
+    return capabilities
 
 
 @lru_cache(maxsize=8)
@@ -42,7 +114,7 @@ def ffmpeg_capabilities(executable, modified):
         }
 
 
-def doctor(network=False) -> dict:
+def doctor(network=False, output_dir: Path | None = None) -> dict:
     executable = shutil.which(os.environ.get("FFMPEG_BINARY", "ffmpeg"))
     capabilities = {
         "burn_supported": False,
@@ -65,6 +137,8 @@ def doctor(network=False) -> dict:
         "ffmpeg_capabilities": capabilities,
         "ort_telemetry_disabled": os.environ.get("ORT_DISABLE_TELEMETRY") == "1",
     }
+    if output_dir is not None:
+        result["output_capabilities"] = output_capabilities(output_dir)
     if network:
         endpoint = os.environ.get("HF_ENDPOINT", "https://huggingface.co")
         try:

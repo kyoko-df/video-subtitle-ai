@@ -99,10 +99,13 @@ def checked_translations(raw, batch):
         ) from exc
 
 
-def fingerprint(transcript, target, model, provider, options):
+def fingerprint(transcript, target, model, provider, options, *, legacy=False):
     value = {
         "source": transcript.source,
-        "segments": [[c.start, c.end, c.text] for c in transcript.segments],
+        "segments": [
+            [c.start, c.end, c.text] if legacy else [float(c.start), float(c.end), c.text]
+            for c in transcript.segments
+        ],
         "target": target,
         "model": model,
         "provider": provider,
@@ -114,12 +117,14 @@ def fingerprint(transcript, target, model, provider, options):
     ).hexdigest()
 
 
-def checkpoint_path(directory, transcript, target, model, provider, options):
+def checkpoint_path(
+    directory, transcript, target, model, provider, options, *, cache_directory=None, legacy=False
+):
     return (
-        Path(directory)
-        / ".translation-cache"
-        / (fingerprint(transcript, target, model, provider, options) + ".json")
-    )
+        Path(cache_directory)
+        if cache_directory is not None
+        else Path(directory) / ".translation-cache"
+    ) / (fingerprint(transcript, target, model, provider, options, legacy=legacy) + ".json")
 
 
 def load_checkpoint(path, signature, total):
@@ -299,16 +304,27 @@ def translate(
         "checkpoint_saved": bool(values and checkpoint),
     }
 
-    def emit(message=None):
-        stats["elapsed_seconds"] = round(time.monotonic() - started, 1)
+    last_snapshot, last_emit = None, float("-inf")
+
+    def emit(message=None, *, force=False):
+        nonlocal last_snapshot, last_emit
+        now = time.monotonic()
+        stats["elapsed_seconds"] = round(now - started, 1)
+        message = message or (
+            f"已翻译 {len(values)} / {len(transcript.segments)} 条；{stats['running_batches']} 批处理中"
+        )
+        # Elapsed time is a heartbeat, not a change in completed work.
+        snapshot = (
+            {key: value for key, value in stats.items() if key != "elapsed_seconds"},
+            message,
+        )
+        if not force and snapshot == last_snapshot and now - last_emit < 2:
+            return
+        last_snapshot, last_emit = snapshot, now
         if details:
             details(dict(stats))
         if progress:
-            progress(
-                len(values) / max(1, len(transcript.segments)),
-                message
-                or f"已翻译 {len(values)} / {len(transcript.segments)} 条；{stats['running_batches']} 批处理中",
-            )
+            progress(len(values) / max(1, len(transcript.segments)), message)
 
     def drain():
         while True:
@@ -331,8 +347,12 @@ def translate(
                 stats["completed_cues"] = len(values)
             elif kind == "retry":
                 stats["retries"] += 1
+                emit(f"临时故障，正在重试；累计 {stats['retries']} 次")
+                continue
             elif kind == "split":
                 stats["splits"] += 1
+                emit(f"正在拆批恢复；累计 {stats['splits']} 次")
+                continue
             emit()
 
     def run(part):
@@ -395,7 +415,7 @@ def translate(
         executor.shutdown(wait=True, cancel_futures=True)
         drain()
         stats["running_batches"] = 0
-        emit()
+        emit(force=True)
     caption_options = CaptionOptions(**transcript.metadata.get("captions", {}))
     result = [
         replace(

@@ -174,7 +174,7 @@
               </select></label
             >
             <p class="muted">
-              疑似重复会标记供校对。轻声方案可能增加噪声字幕，减少重复方案可能漏掉低置信度对白。
+              疑似重复和时间异常会标记供校对。轻声方案可能增加噪声字幕，减少重复方案可能漏掉低置信度对白。
             </p>
             <details>
               <summary>高级识别参数</summary>
@@ -520,14 +520,14 @@
           </p>
           <details>
             <summary id="quality-summary">字幕质量检查</summary>
-            <p class="muted">疑似重复请先试听确认。删除后可撤销。</p>
+            <p class="muted">疑似重复或时间异常请先试听确认。删除后可撤销。</p>
             <button
               id="delete-suspicions"
               class="secondary"
               type="button"
               disabled
             >
-              删除标记的疑似重复
+              删除标记字幕
             </button>
             <div id="quality-list" class="quality-list"></div>
           </details>

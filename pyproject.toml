@@ -9,7 +9,7 @@ description = "Local and cloud AI subtitles for video, with a browser GUI and CL
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1"]
+dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1", "platformdirs>=4,<5"]
 
 [project.optional-dependencies]
 local = ["faster-whisper>=1.1,<2", "av>=11,<16"]

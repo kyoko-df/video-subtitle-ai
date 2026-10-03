@@ -7,7 +7,7 @@ from threading import Event
 from typing import Callable
 
 from .engines import Engine, EngineOptions, get_engine
-from .exporters import export_files, output_paths
+from .exporters import export_files, preflight_output
 from .media import check_cancel, extract_audio, probe
 from .models import SubtitleError, Transcript, normalize_segments, shift_segment
 
@@ -88,7 +88,7 @@ def transcribe_to_files(
     cancel: Event | None = None,
 ) -> tuple[Transcript, list[Path]]:
     # Detect conflicts before a potentially expensive model run or cloud request.
-    output_paths(output_dir, source.stem, formats, overwrite, protected=source)
+    preflight_output(output_dir, source.stem, formats, overwrite, protected=source)
     transcript = transcribe(source, options, track_index, progress, cancel)
     check_cancel(cancel)
     if progress:

@@ -1,0 +1,905 @@
+{
+  "schema_version": 2,
+  "source": "asr-loop-slice.m4a",
+  "duration": 1800.000167,
+  "language": "ja",
+  "engine": "local",
+  "model": "medium",
+  "segments": [
+    {
+      "start": 0.78,
+      "end": 2.36,
+      "text": "サンプル",
+      "words": [
+        {
+          "start": 0.78,
+          "end": 1.4,
+          "text": "サ",
+          "estimated": false
+        },
+        {
+          "start": 1.4,
+          "end": 1.68,
+          "text": "ン",
+          "estimated": false
+        },
+        {
+          "start": 1.68,
+          "end": 1.9,
+          "text": "プ",
+          "estimated": false
+        },
+        {
+          "start": 1.9,
+          "end": 2.36,
+          "text": "ル",
+          "estimated": false
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 3.12,
+      "end": 4.2,
+      "text": "サンプ",
+      "words": [
+        {
+          "start": 3.12,
+          "end": 3.68,
+          "text": "サ",
+          "estimated": false
+        },
+        {
+          "start": 3.68,
+          "end": 3.94,
+          "text": "ン",
+          "estimated": false
+        },
+        {
+          "start": 3.94,
+          "end": 4.2,
+          "text": "プ",
+          "estimated": false
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 5.61,
+      "end": 6.53,
+      "text": "ル",
+      "words": [
+        {
+          "start": 5.61,
+          "end": 6.53,
+          "text": "ル",
+          "estimated": false
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 6.53,
+      "end": 7.63,
+      "text": "サンプル",
+      "words": [
+        {
+          "start": 6.53,
+          "end": 6.69,
+          "text": "サ",
+          "estimated": false
+        },
+        {
+          "start": 6.69,
+          "end": 6.97,
+          "text": "ン",
+          "estimated": false
+        },
+        {
+          "start": 6.97,
+          "end": 7.17,
+          "text": "プ",
+          "estimated": false
+        },
+        {
+          "start": 7.17,
+          "end": 7.63,
+          "text": "ル",
+          "estimated": false
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 10.86,
+      "end": 17.86,
+      "text": "サ",
+      "words": [
+        {
+          "start": 10.86,
+          "end": 17.86,
+          "text": "サ",
+          "estimated": true
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 23.83,
+      "end": 30.83,
+      "text": "ン",
+      "words": [
+        {
+          "start": 23.83,
+          "end": 30.83,
+          "text": "ン",
+          "estimated": true
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 36.8,
+      "end": 43.8,
+      "text": "プ",
+      "words": [
+        {
+          "start": 36.8,
+          "end": 43.8,
+          "text": "プ",
+          "estimated": true
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 49.769999999999996,
+      "end": 56.769999999999996,
+      "text": "ル",
+      "words": [
+        {
+          "start": 49.769999999999996,
+          "end": 56.769999999999996,
+          "text": "ル",
+          "estimated": true
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 85.97,
+      "end": 87.19,
+      "text": "サンプル",
+      "words": [
+        {
+          "start": 85.97,
+          "end": 86.15,
+          "text": "サ",
+          "estimated": false
+        },
+        {
+          "start": 86.15,
+          "end": 86.29,
+          "text": "ン",
+          "estimated": false
+        },
+        {
+          "start": 86.29,
+          "end": 86.47,
+          "text": "プ",
+          "estimated": false
+        },
+        {
+          "start": 86.47,
+          "end": 87.19,
+          "text": "ル",
+          "estimated": false
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 90.0,
+      "end": 91.24,
+      "text": "サンプル",
+      "words": [
+        {
+          "start": 90.0,
+          "end": 90.24,
+          "text": "サ",
+          "estimated": false
+        },
+        {
+          "start": 90.24,
+          "end": 90.52,
+          "text": "ン",
+          "estimated": false
+        },
+        {
+          "start": 90.52,
+          "end": 90.62,
+          "text": "プ",
+          "estimated": false
+        },
+        {
+          "start": 90.62,
+          "end": 91.24,
+          "text": "ル",
+          "estimated": false
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 101.62,
+      "end": 102.18,
+      "text": "あ",
+      "words": [
+        {
+          "start": 101.62,
+          "end": 102.18,
+          "text": "あ",
+          "estimated": false
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 105.82,
+      "end": 107.1,
+      "text": "そうですね",
+      "words": [
+        {
+          "start": 105.82,
+          "end": 106.05,
+          "text": "そ",
+          "estimated": false
+        },
+        {
+          "start": 106.05,
+          "end": 106.28,
+          "text": "う",
+          "estimated": false
+        },
+        {
+          "start": 106.28,
+          "end": 106.56,
+          "text": "で",
+          "estimated": false
+        },
+        {
+          "start": 106.56,
+          "end": 106.98,
+          "text": "す",
+          "estimated": false
+        },
+        {
+          "start": 106.98,
+          "end": 107.1,
+          "text": "ね",
+          "estimated": false
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 121.89,
+      "end": 122.75,
+      "text": "む",
+      "words": [
+        {
+          "start": 121.89,
+          "end": 122.75,
+          "text": "む",
+          "estimated": false
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 130.14,
+      "end": 132.38,
+      "text": "おてんきがいいですね",
+      "words": [
+        {
+          "start": 130.14,
+          "end": 130.56,
+          "text": "お",
+          "estimated": false
+        },
+        {
+          "start": 130.56,
+          "end": 130.76,
+          "text": "て",
+          "estimated": false
+        },
+        {
+          "start": 130.76,
+          "end": 130.84,
+          "text": "ん",
+          "estimated": false
+        },
+        {
+          "start": 130.84,
+          "end": 130.98000000000002,
+          "text": "き",
+          "estimated": false
+        },
+        {
+          "start": 130.98000000000002,
+          "end": 131.12,
+          "text": "が",
+          "estimated": false
+        },
+        {
+          "start": 131.12,
+          "end": 131.32,
+          "text": "い",
+          "estimated": false
+        },
+        {
+          "start": 131.32,
+          "end": 131.47,
+          "text": "い",
+          "estimated": false
+        },
+        {
+          "start": 131.47,
+          "end": 131.62,
+          "text": "で",
+          "estimated": false
+        },
+        {
+          "start": 131.62,
+          "end": 132.0,
+          "text": "す",
+          "estimated": false
+        },
+        {
+          "start": 132.0,
+          "end": 132.38,
+          "text": "ね",
+          "estimated": false
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 133.72,
+      "end": 135.74,
+      "text": "しごとにいきたくて",
+      "words": [
+        {
+          "start": 133.72,
+          "end": 134.24,
+          "text": "し",
+          "estimated": false
+        },
+        {
+          "start": 134.24,
+          "end": 134.42,
+          "text": "ご",
+          "estimated": false
+        },
+        {
+          "start": 134.42,
+          "end": 134.52,
+          "text": "と",
+          "estimated": false
+        },
+        {
+          "start": 134.52,
+          "end": 134.66,
+          "text": "に",
+          "estimated": false
+        },
+        {
+          "start": 134.66,
+          "end": 134.86,
+          "text": "い",
+          "estimated": false
+        },
+        {
+          "start": 134.86,
+          "end": 134.98000000000002,
+          "text": "き",
+          "estimated": false
+        },
+        {
+          "start": 134.98000000000002,
+          "end": 135.1,
+          "text": "た",
+          "estimated": false
+        },
+        {
+          "start": 135.1,
+          "end": 135.44,
+          "text": "く",
+          "estimated": false
+        },
+        {
+          "start": 135.44,
+          "end": 135.74,
+          "text": "て",
+          "estimated": false
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 136.84,
+      "end": 137.78,
+      "text": "このテスト",
+      "words": [
+        {
+          "start": 136.84,
+          "end": 137.07,
+          "text": "こ",
+          "estimated": false
+        },
+        {
+          "start": 137.07,
+          "end": 137.3,
+          "text": "の",
+          "estimated": false
+        },
+        {
+          "start": 137.3,
+          "end": 137.64,
+          "text": "テ",
+          "estimated": false
+        },
+        {
+          "start": 137.64,
+          "end": 137.74,
+          "text": "ス",
+          "estimated": false
+        },
+        {
+          "start": 137.74,
+          "end": 137.78,
+          "text": "ト",
+          "estimated": false
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 137.78,
+      "end": 139.38,
+      "text": "をかくにんしてね",
+      "words": [
+        {
+          "start": 137.78,
+          "end": 137.94,
+          "text": "を",
+          "estimated": false
+        },
+        {
+          "start": 137.94,
+          "end": 138.1,
+          "text": "か",
+          "estimated": false
+        },
+        {
+          "start": 138.1,
+          "end": 138.36,
+          "text": "く",
+          "estimated": false
+        },
+        {
+          "start": 138.36,
+          "end": 138.48000000000002,
+          "text": "に",
+          "estimated": false
+        },
+        {
+          "start": 138.48000000000002,
+          "end": 138.6,
+          "text": "ん",
+          "estimated": false
+        },
+        {
+          "start": 138.6,
+          "end": 138.99,
+          "text": "し",
+          "estimated": false
+        },
+        {
+          "start": 138.99,
+          "end": 139.38,
+          "text": "てね",
+          "estimated": false
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 140.76,
+      "end": 142.96,
+      "text": "あーまちがえた",
+      "words": [
+        {
+          "start": 140.76,
+          "end": 141.6,
+          "text": "あ",
+          "estimated": false
+        },
+        {
+          "start": 141.6,
+          "end": 141.73000000000002,
+          "text": "ー",
+          "estimated": false
+        },
+        {
+          "start": 141.73000000000002,
+          "end": 141.86,
+          "text": "ま",
+          "estimated": false
+        },
+        {
+          "start": 141.86,
+          "end": 142.0,
+          "text": "ち",
+          "estimated": false
+        },
+        {
+          "start": 142.0,
+          "end": 142.2,
+          "text": "が",
+          "estimated": false
+        },
+        {
+          "start": 142.2,
+          "end": 142.96,
+          "text": "えた",
+          "estimated": false
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 142.96,
+      "end": 145.32,
+      "text": "もうすこしです",
+      "words": [
+        {
+          "start": 142.96,
+          "end": 143.18,
+          "text": "も",
+          "estimated": false
+        },
+        {
+          "start": 143.18,
+          "end": 143.4,
+          "text": "う",
+          "estimated": false
+        },
+        {
+          "start": 143.4,
+          "end": 143.7,
+          "text": "す",
+          "estimated": false
+        },
+        {
+          "start": 143.7,
+          "end": 143.86,
+          "text": "こ",
+          "estimated": false
+        },
+        {
+          "start": 143.86,
+          "end": 144.08,
+          "text": "し",
+          "estimated": false
+        },
+        {
+          "start": 144.08,
+          "end": 145.32,
+          "text": "です",
+          "estimated": false
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 145.32,
+      "end": 147.24,
+      "text": "テストはまだ",
+      "words": [
+        {
+          "start": 145.32,
+          "end": 146.02,
+          "text": "テ",
+          "estimated": false
+        },
+        {
+          "start": 146.02,
+          "end": 146.15,
+          "text": "ス",
+          "estimated": false
+        },
+        {
+          "start": 146.15,
+          "end": 146.28,
+          "text": "ト",
+          "estimated": false
+        },
+        {
+          "start": 146.28,
+          "end": 146.6,
+          "text": "は",
+          "estimated": false
+        },
+        {
+          "start": 146.6,
+          "end": 146.92000000000002,
+          "text": "ま",
+          "estimated": false
+        },
+        {
+          "start": 146.92000000000002,
+          "end": 147.24,
+          "text": "だ",
+          "estimated": false
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.20564432539672495,
+        "no_speech_prob": 0.15066252648830414,
+        "compression_ratio": 2.0168067226890756
+      },
+      "suspicions": []
+    },
+    {
+      "start": 149.54,
+      "end": 153.62,
+      "text": "これから、テストをはじめます",
+      "words": [
+        {
+          "start": 149.54,
+          "end": 149.94,
+          "text": "こ",
+          "estimated": false
+        },
+        {
+          "start": 149.94,
+          "end": 150.16666666666666,
+          "text": "れ",
+          "estimated": false
+        },
+        {
+          "start": 150.16666666666666,
+          "end": 150.39333333333332,
+          "text": "か",
+          "estimated": false
+        },
+        {
+          "start": 150.39333333333332,
+          "end": 150.61999999999998,
+          "text": "ら",
+          "estimated": false
+        },
+        {
+          "start": 151.08,
+          "end": 151.36,
+          "text": "、",
+          "estimated": false
+        },
+        {
+          "start": 151.36,
+          "end": 151.66,
+          "text": "テ",
+          "estimated": false
+        },
+        {
+          "start": 151.66,
+          "end": 151.9,
+          "text": "ス",
+          "estimated": false
+        },
+        {
+          "start": 151.9,
+          "end": 151.94,
+          "text": "ト",
+          "estimated": false
+        },
+        {
+          "start": 151.94,
+          "end": 152.26,
+          "text": "を",
+          "estimated": false
+        },
+        {
+          "start": 152.26,
+          "end": 152.58,
+          "text": "は",
+          "estimated": false
+        },
+        {
+          "start": 152.58,
+          "end": 152.84,
+          "text": "じ",
+          "estimated": false
+        },
+        {
+          "start": 152.84,
+          "end": 153.62,
+          "text": "めます",
+          "estimated": false
+        }
+      ],
+      "speaker": null,
+      "translation": null,
+      "diagnostics": {
+        "avg_logprob": -0.4998225103253904,
+        "no_speech_prob": 0.039602283388376236,
+        "compression_ratio": 1.6232876712328768
+      },
+      "suspicions": []
+    }
+  ],
+  "metadata": {
+    "audio_track": 0,
+    "audio_offset": 0.0,
+    "audio_duration": 1800.0,
+    "asr_profile": "standard",
+    "asr_parameters": {
+      "compression_ratio_threshold": 2.4,
+      "log_prob_threshold": -1.0,
+      "no_speech_threshold": 0.6,
+      "vad_parameters": {
+        "threshold": 0.5
+      }
+    }
+  },
+  "allow_overlap": false,
+  "expected_loop_indices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "fixture_note": "Synthetic fixture: timings, word counts, repetition structure and diagnostics model a real ASR hallucination loop; text is dummy content, not an actual transcription."
+}

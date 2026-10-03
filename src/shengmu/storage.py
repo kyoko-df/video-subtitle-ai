@@ -2,11 +2,37 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
 from .models import SubtitleError
+
+
+def copy_exclusive(source: Path, target: Path):
+    """Copy without replacing another writer's file; clean up our own failed copy."""
+    with source.open("rb") as reader:
+        writer = target.open("xb")
+        identity = os.fstat(writer.fileno())
+        try:
+            with writer:
+                shutil.copyfileobj(reader, writer)
+                writer.flush()
+        except BaseException:
+            # Close before unlinking for Windows. Do not remove a replacement made by
+            # another process while the copy was running.
+            try:
+                writer.close()
+            except OSError:
+                pass
+            try:
+                current = target.lstat()
+                if (current.st_dev, current.st_ino) == (identity.st_dev, identity.st_ino):
+                    target.unlink()
+            except OSError:
+                pass
+            raise
 
 
 def atomic_json(path: Path, data):

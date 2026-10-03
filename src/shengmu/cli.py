@@ -5,14 +5,22 @@ import hashlib
 import json
 import os
 import sys
+import time
 from dataclasses import asdict, replace
 from pathlib import Path
 from threading import Timer
 
 from . import __version__
-from .diagnostics import doctor, redacted_traceback
+from .cache import (
+    checkpoint_directory,
+    preserve_json_times,
+    restore_legacy_cache,
+    restore_translation_cache,
+)
+from .captions import mark_suspicions
+from .diagnostics import doctor, ensure_output_directory, redacted_traceback
 from .engines import EngineOptions
-from .exporters import FORMATS, export_files, output_paths
+from .exporters import FORMATS, export_files, preflight_output
 from .media import probe
 from .models import SubtitleError, Transcript
 from .pipeline import transcribe, transcribe_to_files
@@ -40,6 +48,12 @@ def translation_arguments(command, prefix=""):
         action=argparse.BooleanOptionalAction,
         default=True,
         help="恢复相同字幕 / 翻译设置的已完成结果；--no-resume 重新处理",
+    )
+    command.add_argument(
+        "--checkpoint-dir",
+        type=Path,
+        default=None,
+        help="转写 / 翻译续跑缓存目录；默认本机用户缓存，可用 SHENGMU_CHECKPOINT_DIR 指定",
     )
 
 
@@ -120,6 +134,7 @@ def parser() -> argparse.ArgumentParser:
     diagnostic.add_argument(
         "--network", action="store_true", help="额外探测模型下载服务及 LM Studio，不下载或推理"
     )
+    diagnostic.add_argument("--output-dir", type=Path, help="探测目标目录的写入及安全导出能力")
     for command in commands.choices.values():
         command.add_argument(
             "--verbose",
@@ -147,7 +162,7 @@ def translation_options(args):
     )
 
 
-def translate_for_cli(transcript, args, progress):
+def translate_for_cli(transcript, args, progress, legacy_transcript=None):
     options = translation_options(args)
     checkpoint = checkpoint_path(
         args.output_dir,
@@ -156,7 +171,45 @@ def translate_for_cli(transcript, args, progress):
         args.translation_model,
         args.translation_provider,
         options,
+        cache_directory=checkpoint_directory(args.checkpoint_dir),
     )
+    ensure_output_directory(checkpoint.parent, overwrite=True)
+    candidates = [
+        checkpoint_path(
+            args.output_dir,
+            transcript,
+            args.translation_target,
+            args.translation_model,
+            args.translation_provider,
+            options,
+        )
+    ]
+    if legacy_transcript is not None:
+        candidates.append(
+            checkpoint_path(
+                args.output_dir,
+                legacy_transcript,
+                args.translation_target,
+                args.translation_model,
+                args.translation_provider,
+                options,
+                legacy=True,
+            )
+        )
+        candidates.append(
+            checkpoint_path(
+                args.output_dir,
+                legacy_transcript,
+                args.translation_target,
+                args.translation_model,
+                args.translation_provider,
+                options,
+                cache_directory=checkpoint.parent,
+                legacy=True,
+            )
+        )
+    for candidate in candidates:
+        restore_translation_cache(checkpoint, candidate, len(transcript.segments), args.resume)
     result = translate(
         transcript,
         args.translation_target,
@@ -172,24 +225,57 @@ def translate_for_cli(transcript, args, progress):
     )
 
 
+class ProgressPrinter:
+    def __init__(self, quiet=False):
+        self.quiet = quiet
+        self.last = None
+        self.last_time = float("-inf")
+
+    def __call__(self, stage, amount, message):
+        if self.quiet:
+            return
+        event = (stage, round(amount * 100), message)
+        if event == self.last:
+            return
+        now = time.monotonic()
+        urgent = (
+            self.last is None
+            or stage != self.last[0]
+            or amount >= 1
+            or any(term in message for term in ("重试", "拆批", "恢复", "取消", "失败"))
+        )
+        if not urgent and now - self.last_time < 2:
+            return
+        print(f"[{stage} {amount:5.0%}] {message}", file=sys.stderr)
+        self.last, self.last_time = event, now
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
-
-        def progress(stage, amount, message):
-            if not getattr(args, "quiet", False):
-                print(f"[{stage} {amount:5.0%}] {message}", file=sys.stderr)
+        progress = ProgressPrinter(getattr(args, "quiet", False))
 
         if args.command == "doctor":
-            print(json.dumps(doctor(network=args.network), ensure_ascii=False, indent=2))
+            print(
+                json.dumps(
+                    doctor(network=args.network, output_dir=args.output_dir),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
         elif args.command == "inspect":
             print(json.dumps(probe(args.input).to_dict(), ensure_ascii=False, indent=2))
         elif args.command in {"export", "translate"}:
-            transcript = Transcript.from_dict(json.loads(args.input.read_text(encoding="utf-8")))
+            data = json.loads(args.input.read_text(encoding="utf-8"))
+            transcript = Transcript.from_dict(data)
             stem = args.input.stem + (".translated" if args.command == "translate" else "")
-            output_paths(args.output_dir, stem, args.formats, args.overwrite, protected=args.input)
+            preflight_output(
+                args.output_dir, stem, args.formats, args.overwrite, protected=args.input
+            )
             if args.command == "translate":
-                transcript = translate_for_cli(transcript, args, progress)
+                transcript = translate_for_cli(
+                    transcript, args, progress, preserve_json_times(transcript, data)
+                )
             elif args.export_mode:
                 transcript = replace(
                     transcript, metadata={**transcript.metadata, "export_mode": args.export_mode}
@@ -253,7 +339,7 @@ def main(argv: list[str] | None = None) -> int:
                 if not args.translation_model:
                     raise SubtitleError("转写后翻译需要 --translation-model 指定文字模型。")
                 translation_options(args).validate()
-                output_paths(
+                preflight_output(
                     args.output_dir,
                     args.input.stem,
                     args.formats,
@@ -274,14 +360,22 @@ def main(argv: list[str] | None = None) -> int:
                         sort_keys=True,
                     ).encode()
                 ).hexdigest()
-                cache = args.output_dir / ".translation-cache" / (signature + ".source.json")
+                cache = checkpoint_directory(args.checkpoint_dir) / (signature + ".source.json")
+                ensure_output_directory(cache.parent, overwrite=True)
+                restore_legacy_cache(
+                    cache, args.output_dir / ".translation-cache" / cache.name, args.resume
+                )
                 if args.resume and cache.is_file():
-                    transcript = Transcript.from_dict(json.loads(cache.read_text(encoding="utf-8")))
+                    data = json.loads(cache.read_text(encoding="utf-8"))
+                    transcript = Transcript.from_dict(data)
+                    legacy_transcript = preserve_json_times(transcript, data)
+                    transcript = replace(transcript, segments=mark_suspicions(transcript.segments))
                     progress("transcribe", 1, "已恢复上次完成的转写，继续翻译…")
                 else:
                     transcript = transcribe(args.input, options, args.track, progress)
+                    legacy_transcript = transcript
                     atomic_json(cache, transcript.to_dict())
-                transcript = translate_for_cli(transcript, args, progress)
+                transcript = translate_for_cli(transcript, args, progress, legacy_transcript)
                 paths = export_files(
                     transcript,
                     args.output_dir,

@@ -7,6 +7,11 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def isolated_checkpoint_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHENGMU_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
+
+
 @pytest.fixture
 def media(tmp_path: Path) -> Path:
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):

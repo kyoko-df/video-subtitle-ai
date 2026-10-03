@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import math
 import re
+from bisect import bisect_right
+from collections import Counter
 from dataclasses import dataclass, replace
 from typing import Iterable
 
@@ -76,12 +78,18 @@ def is_hallucination(text: str) -> bool:
 
 
 def mark_suspicions(segments):
-    """Flag repetition for review; never discard a cue based on this heuristic."""
+    """Flag repetition or suspect timing for review; never discard a cue."""
     texts = [re.sub(r"[\W_]", "", cue.text).casefold() for cue in segments]
-    marked = set()
+    reasons = [list(cue.suspicions) for cue in segments]
+
+    def mark(indices, reason="疑似重复循环，请试听确认"):
+        for i in indices:
+            if reason not in reasons[i]:
+                reasons[i].append(reason)
+
     for index, text in enumerate(texts):
         if repetitive_text(text):
-            marked.add(index)
+            mark([index])
         if not text:
             continue
         group = [
@@ -95,7 +103,7 @@ def mark_suspicions(segments):
             for i in group
         )
         if len(group) >= 4 and weak:
-            marked.update(group)
+            mark(group)
         short = list(range(max(0, index - 9), index + 1))
         if (
             len(short) >= 8
@@ -107,13 +115,46 @@ def mark_suspicions(segments):
                 all(char == joined[pos % period] for pos, char in enumerate(joined))
                 for period in range(1, 5)
             ):
-                marked.update(short)
-    return [
-        replace(cue, suspicions=list(dict.fromkeys([*cue.suspicions, "疑似重复循环，请试听确认"])))
-        if index in marked
-        else cue
-        for index, cue in enumerate(segments)
-    ]
+                mark(short)
+        duration = segments[index].end - segments[index].start
+        if (
+            len(text) <= 2
+            and duration >= 4
+            and len(text) / duration < 0.5
+            and not re.fullmatch(
+                r"[ぁあぃいぅうぇえぉおんっァアィイゥウェエォオンッー]+|[啊哦嗯哎唉呃欸]+|ah+|oh+|u+m+|h+m+",
+                text,
+            )
+        ):
+            estimated = any(word.estimated for word in segments[index].words)
+            mark(
+                [index],
+                "时间轴为估算且字速异常，请试听确认"
+                if estimated
+                else "字速异常缓慢，疑似时间轴偏差，请试听确认",
+            )
+
+    # Mixed whole words and their fragments can span much longer than 30 seconds.
+    # Require ordered substrings, several whole-word repeats, and a dominant group;
+    # a shared character set or a normal repeated response alone is insufficient.
+    counts = Counter(texts)
+    starts = [cue.start for cue in segments]
+    for index, anchor in enumerate(texts):
+        if not 3 <= len(anchor) <= 8 or counts[anchor] < 3:
+            continue
+        end = bisect_right(starts, starts[index] + 120)
+        group = [i for i in range(index, end) if texts[i] and texts[i] in anchor]
+        if (
+            len(group) < 6
+            or sum(texts[i] == anchor for i in group) < 3
+            or sum(len(texts[i]) < len(anchor) for i in group) < 2
+            or segments[group[-1]].end - segments[group[0]].start < 60
+        ):
+            continue
+        window = [i for i in range(group[0], group[-1] + 1) if texts[i]]
+        if len(group) / len(window) >= 0.7:
+            mark(group)
+    return [replace(cue, suspicions=reason) for cue, reason in zip(segments, reasons, strict=True)]
 
 
 def repetitive_text(text):

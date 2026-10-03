@@ -166,7 +166,18 @@ def model_inventory():
                     continue
                 instances = item.get("loaded_instances", [])
                 config = instances[0].get("config", {}) if instances else {}
-                reasoning = item.get("capabilities", {}).get("reasoning", {}) or {}
+                capabilities = item.get("capabilities")
+                reasoning = (
+                    capabilities.get("reasoning")
+                    if generation == "native-v1" and isinstance(capabilities, dict)
+                    else None
+                )
+                allowed = reasoning.get("allowed_options") if isinstance(reasoning, dict) else None
+                reasoning_options = (
+                    [value for value in allowed if isinstance(value, str)]
+                    if isinstance(allowed, list)
+                    else []
+                )
                 results[identifier] = {
                     "id": identifier,
                     "name": item.get("display_name") or identifier,
@@ -180,7 +191,7 @@ def model_inventory():
                     "max_context_length": item.get("max_context_length"),
                     "parallel": config.get("parallel"),
                     "format": item.get("format", item.get("compatibility_type")),
-                    "reasoning_options": reasoning.get("allowed_options", []),
+                    "reasoning_options": reasoning_options,
                     "api": generation,
                 }
             return list(results.values())

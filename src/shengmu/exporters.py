@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import errno
 import html
 import json
 import os
 import tempfile
 from pathlib import Path
 
+from .diagnostics import ensure_output_directory
 from .models import SubtitleError, Transcript
+from .storage import copy_exclusive
 
 FORMATS = ("srt", "vtt", "ass", "txt", "json")
+LINK_UNSUPPORTED = {errno.ENOTSUP, errno.EOPNOTSUPP, errno.EPERM, errno.EXDEV, errno.ENOSYS}
 
 
 def timestamp_ticks(ticks: int, rate: int, separator: str) -> str:
@@ -152,6 +156,12 @@ def output_paths(
     return paths
 
 
+def preflight_output(directory, stem, formats, overwrite=False, protected=None):
+    paths = output_paths(directory, stem, formats, overwrite, protected)
+    ensure_output_directory(paths[0].parent, overwrite)
+    return paths
+
+
 def export_files(
     transcript: Transcript,
     directory: Path,
@@ -180,7 +190,14 @@ def export_files(
             else:
                 # link is atomic and refuses to overwrite even if another writer wins a race.
                 try:
-                    os.link(temp_path, path)
+                    try:
+                        os.link(temp_path, path)
+                    except OSError as exc:
+                        if isinstance(exc, FileExistsError) or exc.errno not in LINK_UNSUPPORTED:
+                            raise
+                        # SMB may not support hard links. Exclusive creation still protects
+                        # existing files, but a reader can see the copy before it finishes.
+                        copy_exclusive(temp_path, path)
                 except FileExistsError as exc:
                     raise SubtitleError(f"输出已存在：{path}") from exc
                 temp_path.unlink()

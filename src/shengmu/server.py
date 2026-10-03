@@ -26,8 +26,9 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from . import __version__, lmstudio, model_manager
+from .cache import preserve_json_times, restore_translation_cache
 from .captions import CaptionOptions, quality_report
-from .diagnostics import doctor, redacted_traceback
+from .diagnostics import doctor, ensure_output_directory, redacted_traceback
 from .engines import EngineOptions
 from .exporters import FORMATS, export_files
 from .media import MediaInfo, check_cancel, probe
@@ -373,7 +374,11 @@ class Workspace:
                 )
                 job.updated, job.revision = data["updated"], data.get("revision", 0)
                 job.transcript = (
-                    Transcript.from_dict(data["transcript"]) if data["transcript"] else None
+                    preserve_json_times(
+                        Transcript.from_dict(data["transcript"]), data["transcript"]
+                    )
+                    if data["transcript"]
+                    else None
                 )
                 job.files = [
                     manifest.parent / f["name"]
@@ -405,6 +410,10 @@ class Workspace:
     def start_operation(self, job, kind, action, context=None):
         with self.lock:
             self.check_edit(job)
+            try:
+                ensure_output_directory(job.directory, overwrite=True)
+            except SubtitleError as exc:
+                raise HTTPException(400, str(exc)) from exc
             if (job.directory / "draft.json").is_file():
                 raise HTTPException(409, "请先保存并导出草稿，再执行此操作。")
             job.operation_cancel = threading.Event()
@@ -516,6 +525,7 @@ class Workspace:
         try:
             if not job.media.available:
                 raise SubtitleError("源文件无法读取或内容已变化，请重新连接共享并再次添加视频。")
+            ensure_output_directory(job.directory, overwrite=True)
             r = job.request
             result = transcribe(
                 job.media.path,
@@ -1099,6 +1109,23 @@ def create_app(
                     workspace.save_job(job)
 
         def action(update, cancel):
+            checkpoint = checkpoint_path(
+                job.directory, job.transcript, data.target, data.model, data.provider, options
+            )
+            restore_translation_cache(
+                checkpoint,
+                checkpoint_path(
+                    job.directory,
+                    job.transcript,
+                    data.target,
+                    data.model,
+                    data.provider,
+                    options,
+                    legacy=True,
+                ),
+                len(job.transcript.segments),
+                data.resume,
+            )
             return translate(
                 job.transcript,
                 data.target,
@@ -1107,9 +1134,7 @@ def create_app(
                 cancel,
                 data.provider,
                 options,
-                checkpoint_path(
-                    job.directory, job.transcript, data.target, data.model, data.provider, options
-                ),
+                checkpoint,
                 data.resume,
                 details,
             )
