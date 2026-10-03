@@ -106,3 +106,55 @@ def test_local_quality_options_can_be_overridden(tmp_path, monkeypatch):
     assert len(cues) == 1
     assert calls[0]["initial_prompt"] == "自定义提示"
     assert calls[0]["condition_on_previous_text"] is True
+
+
+def test_raw_repetition_is_flagged_before_caption_splitting(tmp_path, monkeypatch):
+    import sys
+
+    from shengmu.captions import CaptionOptions
+
+    calls = []
+
+    class Model:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def transcribe(self, audio, **kwargs):
+            calls.append(kwargs)
+            return iter(
+                [
+                    SimpleNamespace(
+                        start=0,
+                        end=3,
+                        text="サンプル" * 4,
+                        words=None,
+                        no_speech_prob=0.8,
+                        avg_logprob=-1.2,
+                        compression_ratio=float("nan"),
+                    )
+                ]
+            ), SimpleNamespace(language="ja")
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=Model))
+    monkeypatch.setattr(LocalEngine, "_cached_model", None)
+    audio = tmp_path / "raw.wav"
+    with wave.open(str(audio), "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(16000)
+        stream.writeframes(b"\0\0" * 48000)
+    cues, _, _ = LocalEngine().transcribe(
+        audio,
+        EngineOptions(
+            language="ja",
+            asr_profile="less-repetition",
+            no_speech_threshold=0.7,
+            captions=CaptionOptions(cjk_chars=5, max_lines=1),
+        ),
+        lambda *args: None,
+        None,
+    )
+    assert len(cues) > 1 and all(c.suspicions for c in cues)
+    assert all(c.diagnostics == {"avg_logprob": -1.2, "no_speech_prob": 0.8} for c in cues)
+    assert calls[0]["no_speech_threshold"] == 0.7 and calls[0]["repetition_penalty"] == 1.1
+    assert "".join(c.text for c in cues) == "サンプル" * 4

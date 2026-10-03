@@ -151,3 +151,37 @@ test("overlap is explicit and quality checks both languages", () => {
   assert.ok(issues[0].messages.includes("阅读速度过快"));
   assert.ok(issues[1].messages.includes("重叠语音"));
 });
+
+test("suspected repetition is reviewable, deletion is reversible, edits clear stale flags", () => {
+  const flagged = {
+    ...cues[0],
+    suspicions: ["疑似重复循环，请试听确认"],
+    diagnostics: { no_speech_prob: 0.9 },
+  };
+  const original = [flagged, cues[1]];
+  const kept = editor.removeSuspicions(original);
+  assert.deepEqual(kept, [cues[1]]);
+  const edit = { index: 0, removed: original, inserted: kept };
+  assert.deepEqual(editor.applyEdit(kept, editor.inverseEdit(edit)), original);
+  assert.deepEqual(editor.splitCue(flagged, 6, 1)[0].suspicions, []);
+  assert.deepEqual(editor.mergeCues(flagged, cues[1]).diagnostics, {});
+  assert.deepEqual(
+    editor.replaceText(original, "hello", "hi")[0].suspicions,
+    [],
+  );
+  const issues = editor.quality(
+    original,
+    {
+      captions: {
+        cjk_chars: 20,
+        latin_chars: 42,
+        max_lines: 2,
+        min_seconds: 1,
+        max_seconds: 7,
+        max_cps: 20,
+      },
+    },
+    6,
+  );
+  assert.ok(issues[0].messages.includes("疑似重复循环，请试听确认"));
+});

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable
 
 from .models import Segment, SubtitleError, Word
@@ -48,7 +48,7 @@ def quality_report(segments, options=None, allow_overlap=False):
     issues = []
     last_end = 0
     for index, cue in enumerate(segments):
-        messages = []
+        messages = list(cue.suspicions)
         limit = options.cjk_chars if CJK.search(cue.text) else options.latin_chars
         for text in (cue.text, cue.translation):
             if not text:
@@ -73,6 +73,52 @@ def quality_report(segments, options=None, allow_overlap=False):
 
 def is_hallucination(text: str) -> bool:
     return re.sub(r"[\W_]", "", text).lower() in HALLUCINATIONS
+
+
+def mark_suspicions(segments):
+    """Flag repetition for review; never discard a cue based on this heuristic."""
+    texts = [re.sub(r"[\W_]", "", cue.text).casefold() for cue in segments]
+    marked = set()
+    for index, text in enumerate(texts):
+        if repetitive_text(text):
+            marked.add(index)
+        if not text:
+            continue
+        group = [
+            i
+            for i in range(max(0, index - 12), index + 1)
+            if segments[index].start - segments[i].start <= 30 and texts[i] == text
+        ]
+        weak = any(
+            segments[i].diagnostics.get("no_speech_prob", 0) >= 0.6
+            or segments[i].diagnostics.get("avg_logprob", 0) <= -1
+            for i in group
+        )
+        if len(group) >= 4 and weak:
+            marked.update(group)
+        short = list(range(max(0, index - 9), index + 1))
+        if (
+            len(short) >= 8
+            and all(len(texts[i]) == 1 for i in short)
+            and segments[index].end - segments[short[0]].start <= 30
+        ):
+            joined = "".join(texts[i] for i in short)
+            if any(
+                all(char == joined[pos % period] for pos, char in enumerate(joined))
+                for period in range(1, 5)
+            ):
+                marked.update(short)
+    return [
+        replace(cue, suspicions=list(dict.fromkeys([*cue.suspicions, "疑似重复循环，请试听确认"])))
+        if index in marked
+        else cue
+        for index, cue in enumerate(segments)
+    ]
+
+
+def repetitive_text(text):
+    normalized = re.sub(r"[\W_]", "", text).casefold()
+    return len(normalized) >= 16 and bool(re.fullmatch(r"(.{1,20}?)\1{3,}", normalized))
 
 
 def text_tokens(text: str, limit: int) -> list[str]:

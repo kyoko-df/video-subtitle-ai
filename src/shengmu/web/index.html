@@ -167,6 +167,55 @@
           <details>
             <summary>识别提示与质量选项</summary>
             <label class="field"
+              >识别方案<select id="asr-profile">
+                <option value="standard">标准</option>
+                <option value="less-repetition">减少重复（需试听）</option>
+                <option value="soft-speech">轻声优先（需试听）</option>
+              </select></label
+            >
+            <p class="muted">
+              疑似重复会标记供校对。轻声方案可能增加噪声字幕，减少重复方案可能漏掉低置信度对白。
+            </p>
+            <details>
+              <summary>高级识别参数</summary>
+              <label class="field"
+                >压缩率阈值<input
+                  id="compression-ratio-threshold"
+                  type="number"
+                  min="1"
+                  max="10"
+                  step="0.1"
+                  placeholder="跟随方案"
+              /></label>
+              <label class="field"
+                >识别置信度阈值<input
+                  id="log-prob-threshold"
+                  type="number"
+                  min="-10"
+                  max="0"
+                  step="0.1"
+                  placeholder="跟随方案"
+              /></label>
+              <label class="field"
+                >无语音阈值<input
+                  id="no-speech-threshold"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  placeholder="跟随方案"
+              /></label>
+              <label class="field"
+                >语音检测阈值<input
+                  id="vad-threshold"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  placeholder="跟随方案"
+              /></label>
+            </details>
+            <label class="field"
               ><span class="sr-only">识别提示</span
               ><textarea
                 id="prompt"
@@ -471,6 +520,15 @@
           </p>
           <details>
             <summary id="quality-summary">字幕质量检查</summary>
+            <p class="muted">疑似重复请先试听确认。删除后可撤销。</p>
+            <button
+              id="delete-suspicions"
+              class="secondary"
+              type="button"
+              disabled
+            >
+              删除标记的疑似重复
+            </button>
             <div id="quality-list" class="quality-list"></div>
           </details>
         </section>
@@ -517,6 +575,83 @@
               取消操作
             </button>
           </div>
+          <details>
+            <summary>翻译设置与恢复</summary>
+            <div class="toolbar">
+              <label
+                >同时处理<select id="translation-concurrency">
+                  <option value="1">1 批（默认）</option>
+                  <option value="2">2 批</option>
+                </select></label
+              >
+              <label
+                >每批字幕数<input
+                  id="translation-batch-size"
+                  required
+                  type="number"
+                  value="8"
+                  min="1"
+                  max="40"
+              /></label>
+              <label
+                >每批字符数<input
+                  id="translation-max-chars"
+                  required
+                  type="number"
+                  value="2000"
+                  min="100"
+                  max="12000"
+              /></label>
+              <label
+                >超时（秒）<input
+                  id="translation-timeout"
+                  type="number"
+                  min="5"
+                  max="3600"
+                  placeholder="服务默认"
+              /></label>
+              <label
+                >临时故障重试<input
+                  id="translation-retries"
+                  required
+                  type="number"
+                  value="2"
+                  min="0"
+                  max="3"
+              /></label>
+              <label
+                >输出上限<input
+                  id="translation-max-tokens"
+                  required
+                  type="number"
+                  value="4096"
+                  min="128"
+                  max="32768"
+              /></label>
+              <label
+                >模型思考<select id="translation-reasoning">
+                  <option value="auto">模型默认</option>
+                  <option value="off">关闭</option>
+                  <option value="on">开启</option>
+                  <option value="low">少量</option>
+                  <option value="medium">适中</option>
+                  <option value="high">充分</option>
+                </select></label
+              >
+            </div>
+            <label class="quality-option"
+              ><input
+                id="translation-resume"
+                type="checkbox"
+                checked
+              />继续上次已保存的翻译</label
+            >
+            <p class="muted">
+              每批通过校验后自动保存，失败可继续。取消勾选会重新翻译当前设置对应的全部字幕。并发
+              2 需要本地服务支持；思考控制只对声明支持的 LM Studio 模型开放。
+            </p>
+            <p id="translation-capabilities" class="muted" role="status"></p>
+          </details>
           <p class="muted">
             <span id="translation-note"
               >翻译会向配置的 OpenAI 服务发送字幕文本并使用 API 额度。</span

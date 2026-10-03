@@ -1,3 +1,7 @@
 """Shengmu: one transcription pipeline, two interfaces."""
 
-__version__ = "0.2.2"
+import os
+
+os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
+
+__version__ = "0.3.0"

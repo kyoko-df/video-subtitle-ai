@@ -128,7 +128,7 @@ def test_interrupted_task_recovery_and_retry(media, tmp_path, monkeypatch):
     manifest.write_text(json.dumps(data))
     with TestClient(create_app(workspace_dir=root)) as client:
         job = client.get(f"/api/jobs/{job_id}").json()
-        assert job["status"] == "error" and job["operation"] == {}
+        assert job["status"] == "error" and job["operation"]["interrupted"]
         headers = {"X-Session-Token": client.get("/api/config").json()["token"]}
         assert client.post(f"/api/jobs/{job_id}/retry", headers=headers).status_code == 202
         assert wait_job(client, job_id)["status"] == "done"

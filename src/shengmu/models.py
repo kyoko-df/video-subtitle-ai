@@ -51,8 +51,22 @@ class Segment:
     words: list[Word] = field(default_factory=list)
     speaker: str | None = None
     translation: str | None = None
+    diagnostics: dict[str, float] = field(default_factory=dict)
+    suspicions: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        if (
+            not isinstance(self.diagnostics, dict)
+            or not isinstance(self.suspicions, list)
+            or any(
+                k not in {"avg_logprob", "no_speech_prob", "compression_ratio"}
+                or not isinstance(v, (int, float))
+                or not math.isfinite(v)
+                for k, v in self.diagnostics.items()
+            )
+            or any(not isinstance(v, str) or len(v) > 100 for v in self.suspicions)
+        ):
+            raise SubtitleError("字幕诊断信息无效。")
         if not all(math.isfinite(v) for v in (self.start, self.end)):
             raise SubtitleError("字幕时间必须是有限数值。")
         if self.start < 0 or self.end <= self.start:
@@ -122,6 +136,8 @@ class Transcript:
                         [Word(**word) for word in s.get("words", [])],
                         s.get("speaker"),
                         s.get("translation"),
+                        s.get("diagnostics", {}),
+                        s.get("suspicions", []),
                     )
                     for s in data["segments"]
                 ],

@@ -33,8 +33,8 @@ from .exporters import FORMATS, export_files
 from .media import MediaInfo, check_cancel, probe
 from .models import Cancelled, Segment, SubtitleError, Transcript, Word
 from .pipeline import transcribe
-from .storage import workspace_lock
-from .translation import translate
+from .storage import atomic_json, workspace_lock
+from .translation import TranslationOptions, checkpoint_path, translate
 from .video import export_video, waveform
 
 WEB = Path(__file__).with_name("web")
@@ -79,6 +79,13 @@ class JobRequest(ExportSettings):
     prompt: str = Field(default="", max_length=2000)
     condition_on_previous_text: bool = False
     filter_hallucinations: bool = True
+    asr_profile: Literal["standard", "less-repetition", "soft-speech"] = "standard"
+    compression_ratio_threshold: float | None = Field(
+        default=None, ge=1, le=10, allow_inf_nan=False
+    )
+    log_prob_threshold: float | None = Field(default=None, ge=-10, le=0, allow_inf_nan=False)
+    no_speech_threshold: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    vad_threshold: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     diarize: bool = False
     num_speakers: int | None = Field(default=None, ge=1, le=20)
     chunk_seconds: int = Field(default=600, ge=30, le=600)
@@ -101,6 +108,8 @@ class CueRequest(BaseModel):
     words: list[WordRequest] = Field(default_factory=list, max_length=10000)
     speaker: str | None = Field(default=None, max_length=80)
     translation: str | None = Field(default=None, max_length=10000)
+    diagnostics: dict[str, float] = Field(default_factory=dict)
+    suspicions: list[str] = Field(default_factory=list, max_length=20)
 
 
 class EditRequest(ExportSettings):
@@ -118,6 +127,8 @@ class DraftCue(BaseModel):
     words: list[WordRequest] = Field(default_factory=list, max_length=10000)
     speaker: str | None = Field(default=None, max_length=80)
     translation: str | None = Field(default=None, max_length=10000)
+    diagnostics: dict[str, float] = Field(default_factory=dict)
+    suspicions: list[str] = Field(default_factory=list, max_length=20)
 
 
 class DraftRequest(ExportSettings):
@@ -128,7 +139,23 @@ class DraftRequest(ExportSettings):
     revision: int
 
 
-class TranslationRequest(BaseModel):
+class TranslationSettings(BaseModel):
+    concurrency: int = Field(default=1, ge=1, le=2)
+    retries: int = Field(default=2, ge=0, le=3)
+    batch_size: int = Field(default=8, ge=1, le=40)
+    max_chars: int = Field(default=2000, ge=100, le=12000)
+    timeout: float | None = Field(default=None, ge=5, le=3600, allow_inf_nan=False)
+    max_tokens: int = Field(default=4096, ge=128, le=32768)
+    reasoning: Literal["auto", "off", "on", "low", "medium", "high"] = "auto"
+    resume: bool = True
+
+    def options(self):
+        return TranslationOptions(
+            **self.model_dump(exclude={"resume", "provider", "target", "model"})
+        )
+
+
+class TranslationRequest(TranslationSettings):
     provider: Literal["openai", "lmstudio"] = "openai"
     target: str = Field(min_length=1, max_length=80)
     model: str = Field(default="gpt-4o-mini", min_length=1, max_length=256)
@@ -143,23 +170,11 @@ class PreferencesRequest(BaseModel):
     translation_provider: Literal["openai", "lmstudio"] = "openai"
     translation_model: str = Field(default="gpt-4o-mini", max_length=256)
     target_language: str = Field(default="en", max_length=80)
+    translation_options: TranslationSettings = Field(default_factory=TranslationSettings)
 
 
 class LinkedMediaRequest(BaseModel):
     path: str = Field(min_length=1, max_length=32768)
-
-
-def atomic_json(path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(prefix=".save-", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(data, stream, ensure_ascii=False, allow_nan=False)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(name, path)
-    finally:
-        Path(name).unlink(missing_ok=True)
 
 
 @dataclass
@@ -368,8 +383,12 @@ class Workspace:
                 job.operation = data.get("operation", {})
                 if job.status not in TERMINAL:
                     job.status, job.message = "error", "上次处理被服务中断，可重试。"
-                if job.operation.get("status") not in TERMINAL:
-                    job.operation = {}
+                if job.operation and job.operation.get("status") not in TERMINAL:
+                    job.operation.update(
+                        status="error",
+                        interrupted=True,
+                        message="上次操作被服务中断。翻译可勾选继续，恢复已保存的译文。",
+                    )
                 self.jobs[job.id] = job
                 self.save_job(job)
             except (OSError, ValueError, KeyError, TypeError, SubtitleError):
@@ -383,7 +402,7 @@ class Workspace:
         if revision is not None and revision != job.revision:
             raise HTTPException(409, "字幕已在其他页面更新，请重新打开项目后编辑。")
 
-    def start_operation(self, job, kind, action):
+    def start_operation(self, job, kind, action, context=None):
         with self.lock:
             self.check_edit(job)
             if (job.directory / "draft.json").is_file():
@@ -394,12 +413,16 @@ class Workspace:
                 "status": "queued",
                 "progress": 0,
                 "message": "等待处理…",
+                "started_at": time.time(),
+                **(context or {}),
             }
             self.save_job(job)
 
         def run():
             def update(amount, message):
                 with self.lock:
+                    if job.operation_cancel.is_set():
+                        message = "正在取消，等待当前请求结束；已完成的译文会保留。"
                     job.operation.update(status="running", progress=amount, message=message)
 
             try:
@@ -511,6 +534,11 @@ class Workspace:
                     condition_on_previous_text=r.condition_on_previous_text,
                     filter_hallucinations=r.filter_hallucinations,
                     chunk_seconds=r.chunk_seconds,
+                    asr_profile=r.asr_profile,
+                    compression_ratio_threshold=r.compression_ratio_threshold,
+                    log_prob_threshold=r.log_prob_threshold,
+                    no_speech_threshold=r.no_speech_threshold,
+                    vad_threshold=r.vad_threshold,
                     captions=CaptionOptions(**r.captions.model_dump()),
                     diarize=r.diarize,
                     num_speakers=r.num_speakers,
@@ -820,6 +848,8 @@ def create_app(
                             [Word(**w.model_dump()) for w in c.words],
                             c.speaker,
                             c.translation,
+                            c.diagnostics,
+                            c.suspicions,
                         )
                         for c in data.segments
                     ],
@@ -956,6 +986,7 @@ def create_app(
             if sum(j.status not in TERMINAL for j in workspace.jobs.values()) >= 5:
                 raise HTTPException(429, "最多允许 5 个任务等待或处理。")
             job.cancel = threading.Event()
+            job.operation = {}
             job.status, job.progress, job.message = "queued", 0, "等待重试…"
             workspace.save_job(job)
             workspace.executor.submit(workspace.process, job)
@@ -1049,7 +1080,8 @@ def create_app(
     @app.get("/api/translation/models")
     def translation_models():
         try:
-            return {"models": lmstudio.models()}
+            details = lmstudio.model_inventory()
+            return {"models": [model["id"] for model in details], "details": details}
         except SubtitleError as exc:
             raise HTTPException(503, str(exc)) from exc
 
@@ -1057,12 +1089,36 @@ def create_app(
     def translate_job(job_id: str, data: TranslationRequest):
         workspace = app.state.workspace
         job = workspace.get_job(job_id)
+        options = data.options()
+
+        def details(stats):
+            with workspace.lock:
+                previous = job.operation.get("stats", {})
+                job.operation["stats"] = stats
+                if previous.get("completed_cues") != stats["completed_cues"]:
+                    workspace.save_job(job)
+
+        def action(update, cancel):
+            return translate(
+                job.transcript,
+                data.target,
+                data.model,
+                update,
+                cancel,
+                data.provider,
+                options,
+                checkpoint_path(
+                    job.directory, job.transcript, data.target, data.model, data.provider, options
+                ),
+                data.resume,
+                details,
+            )
+
         return workspace.start_operation(
             job,
             "translate",
-            lambda update, cancel: translate(
-                job.transcript, data.target, data.model, update, cancel, data.provider
-            ),
+            action,
+            {"settings": data.model_dump()},
         )
 
     @app.post("/api/jobs/{job_id}/video", status_code=202)
@@ -1083,6 +1139,8 @@ def create_app(
     def cancel_operation(job_id: str):
         job = app.state.workspace.get_job(job_id)
         job.operation_cancel.set()
+        if job.operation.get("status") in {"queued", "running"}:
+            job.operation["message"] = "正在取消，等待当前请求结束；已完成的译文会保留。"
         return job.public()
 
     @app.get("/api/jobs/{job_id}/video/{mode}")

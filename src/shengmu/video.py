@@ -6,8 +6,10 @@ import wave
 from array import array
 from pathlib import Path
 
+from .diagnostics import ffmpeg_capabilities
 from .exporters import render
 from .media import binary, check_cancel, extract_audio, run_process
+from .models import SubtitleError
 
 
 def waveform(source, track, directory, cancel=None, points=2000):
@@ -30,6 +32,15 @@ def waveform(source, track, directory, cancel=None, points=2000):
 
 
 def export_video(source, transcript, directory, mode="burn", cancel=None):
+    executable = binary("ffmpeg")
+    capabilities = ffmpeg_capabilities(executable, Path(executable).stat().st_mtime_ns)
+    if mode not in {"burn", "soft"}:
+        raise SubtitleError("视频导出方式必须是 burn 或 soft。")
+    if not capabilities[f"{mode}_supported"]:
+        detail = "、".join(capabilities["missing_burn"]) if mode == "burn" else "aac / mov_text"
+        raise SubtitleError(
+            f"当前 FFmpeg 无法执行此导出，请安装支持 {detail or '所需滤镜和编码器'} 的版本。"
+        )
     directory.mkdir(parents=True, exist_ok=True)
     # Temporary filter paths contain no user filenames; escape FFmpeg's filter grammar.
     with tempfile.TemporaryDirectory(prefix="shengmu-render-", dir=directory) as temp:
@@ -40,7 +51,7 @@ def export_video(source, transcript, directory, mode="burn", cancel=None):
         )
         pending = folder / "video.mp4"
         args = [
-            binary("ffmpeg"),
+            executable,
             "-nostdin",
             "-hide_banner",
             "-loglevel",

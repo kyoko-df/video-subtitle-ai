@@ -367,11 +367,14 @@ function renderJob(job) {
     !terminal.has(job.status) ||
     ["queued", "running"].includes(job.operation?.status);
   $("task-progress").hidden = false;
-  $("task-message").textContent =
-    state.busy && job.operation?.message ? job.operation.message : job.message;
-  const progress = ["queued", "running"].includes(job.operation?.status)
-    ? job.operation.progress
-    : job.progress;
+  const operation =
+    job.status === "done" && job.operation?.status ? job.operation : null;
+  const operationName = operation?.kind === "translate" ? "翻译" : "视频导出";
+  document.querySelector(".steps").hidden = !!operation;
+  $("task-message").textContent = operation
+    ? `${operationName}：${operation.message}`
+    : job.message;
+  const progress = operation ? operation.progress || 0 : job.progress;
   $("task-percent").textContent = Math.round(progress * 100) + "%";
   $("progress-bar").style.width = progress * 100 + "%";
   const stageIndex =
@@ -390,9 +393,13 @@ function renderJob(job) {
   });
   $("footer-status").textContent = state.busy
     ? "正在处理"
-    : job.status === "done"
-      ? "字幕已就绪"
-      : "本地字幕工作台";
+    : operation?.status === "error"
+      ? `${operationName}失败，可重新处理`
+      : operation?.status === "cancelled"
+        ? `${operationName}已取消`
+        : job.status === "done"
+          ? "字幕已就绪"
+          : "本地字幕工作台";
   $("downloads").hidden = job.status !== "done";
   $("download-links").replaceChildren();
   for (const file of job.files) {
@@ -499,6 +506,8 @@ function updateCue(index, key, value) {
   state.cues[index] = { ...original, [key]: value };
   if (["text", "start", "end"].includes(key)) state.cues[index].words = [];
   if (key === "text") {
+    state.cues[index].diagnostics = {};
+    state.cues[index].suspicions = [];
     state.cues[index].translation = null;
     const translation = state.rows[index]?.querySelector(".cue-translation");
     if (translation) translation.value = "";

@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+import math
 import os
 import sys
 import wave
 from array import array
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Event, RLock
 from typing import Callable, Protocol
 
-from .captions import CaptionOptions, is_hallucination, split_caption
+from .captions import (
+    CaptionOptions,
+    is_hallucination,
+    mark_suspicions,
+    repetitive_text,
+    split_caption,
+)
+from .errors import local_model_error
 from .media import check_cancel
 from .models import Segment, SubtitleError, shift_segment
 
@@ -30,6 +38,46 @@ class EngineOptions:
     captions: CaptionOptions = field(default_factory=CaptionOptions)
     diarize: bool = False
     num_speakers: int | None = None
+    asr_profile: str = "standard"
+    compression_ratio_threshold: float | None = None
+    log_prob_threshold: float | None = None
+    no_speech_threshold: float | None = None
+    vad_threshold: float | None = None
+
+    def decoding_parameters(self):
+        profiles = {
+            "standard": {
+                "compression_ratio_threshold": 2.4,
+                "log_prob_threshold": -1.0,
+                "no_speech_threshold": 0.6,
+                "vad_parameters": {"threshold": 0.5},
+            },
+            "less-repetition": {
+                "compression_ratio_threshold": 2.2,
+                "log_prob_threshold": -1.0,
+                "no_speech_threshold": 0.6,
+                "vad_parameters": {"threshold": 0.5},
+                "repetition_penalty": 1.1,
+            },
+            "soft-speech": {
+                "compression_ratio_threshold": 2.4,
+                "log_prob_threshold": -1.0,
+                "no_speech_threshold": 0.8,
+                "vad_parameters": {"threshold": 0.35},
+            },
+        }
+        if self.asr_profile not in profiles:
+            raise SubtitleError("识别预设无效。")
+        result = {**profiles[self.asr_profile]}
+        for key in ("compression_ratio_threshold", "log_prob_threshold", "no_speech_threshold"):
+            if getattr(self, key) is not None:
+                result[key] = getattr(self, key)
+        result["vad_parameters"] = {
+            "threshold": self.vad_threshold
+            if self.vad_threshold is not None
+            else result["vad_parameters"]["threshold"]
+        }
+        return result
 
     @property
     def initial_prompt(self) -> str | None:
@@ -47,6 +95,15 @@ class EngineOptions:
             raise SubtitleError("API 分块长度必须在 30 到 600 秒之间。")
         if self.device not in ("cpu", "cuda", "auto"):
             raise SubtitleError("设备必须是 cpu、cuda 或 auto。")
+        parameters = self.decoding_parameters()
+        for value, low, high in [
+            (parameters["compression_ratio_threshold"], 1, 10),
+            (parameters["log_prob_threshold"], -10, 0),
+            (parameters["no_speech_threshold"], 0, 1),
+            (parameters["vad_parameters"]["threshold"], 0, 1),
+        ]:
+            if not math.isfinite(value) or not low <= value <= high:
+                raise SubtitleError("识别阈值无效。")
 
 
 class Engine(Protocol):
@@ -102,6 +159,7 @@ class LocalEngine:
                 beam_size=5,
                 word_timestamps=True,
                 condition_on_previous_text=options.condition_on_previous_text,
+                **options.decoding_parameters(),
             )
             with wave.open(str(audio), "rb") as stream:
                 duration = stream.getnframes() / stream.getframerate()
@@ -109,25 +167,37 @@ class LocalEngine:
             for segment in segments:
                 check_cancel(cancel)
                 if not options.filter_hallucinations or not is_hallucination(segment.text):
+                    cues = split_caption(
+                        max(0, segment.start),
+                        segment.end,
+                        segment.text,
+                        getattr(segment, "words", None),
+                        options.captions,
+                    )
+                    diagnostics = {
+                        key: float(value)
+                        for key in ("avg_logprob", "no_speech_prob", "compression_ratio")
+                        if isinstance(value := getattr(segment, key, None), (int, float))
+                        and math.isfinite(value)
+                    }
                     result.extend(
-                        split_caption(
-                            max(0, segment.start),
-                            segment.end,
-                            segment.text,
-                            getattr(segment, "words", None),
-                            options.captions,
+                        replace(
+                            cue,
+                            diagnostics=diagnostics,
+                            suspicions=["疑似重复循环，请试听确认"]
+                            if repetitive_text(segment.text)
+                            else [],
                         )
+                        for cue in cues
                     )
                 progress(min(0.99, segment.end / duration), "正在识别语音…")
             check_cancel(cancel)
-            return result, info.language, options.model
+            return mark_suspicions(result), info.language, options.model
         except SubtitleError:
             raise
         except Exception as exc:
             # Do not expose network URLs or credentials embedded in vendor exceptions.
-            raise SubtitleError(
-                "本地模型转写失败。请检查模型下载、设备和计算精度；Mac 建议 cpu / int8。"
-            ) from exc
+            raise local_model_error(exc) from exc
 
 
 def silence_cut(frames: bytes, rate: int, channels: int, width: int) -> int | None:

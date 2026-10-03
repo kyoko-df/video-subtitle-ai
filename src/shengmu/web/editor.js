@@ -40,6 +40,7 @@ const CueEditor = (() => {
         start: cue.start,
         end: cut,
         text: left,
+        ...(cue.suspicions ? { suspicions: [], diagnostics: {} } : {}),
         ...(cue.words ? { words: [] } : {}),
         ...(cue.translation !== undefined ? { translation: null } : {}),
       },
@@ -48,6 +49,7 @@ const CueEditor = (() => {
         start: cut,
         end: cue.end,
         text: right,
+        ...(cue.suspicions ? { suspicions: [], diagnostics: {} } : {}),
         ...(cue.words ? { words: [] } : {}),
         ...(cue.translation !== undefined ? { translation: null } : {}),
       },
@@ -60,6 +62,9 @@ const CueEditor = (() => {
       throw new Error("不同说话人的字幕请先统一标注再合并。");
     return {
       ...first,
+      ...(first.suspicions || second.suspicions
+        ? { suspicions: [], diagnostics: {} }
+        : {}),
       ...(first.words || second.words
         ? {
             words:
@@ -156,7 +161,15 @@ const CueEditor = (() => {
     if (!search) throw new Error("请输入查找文字。");
     return cues.map((c) => {
       const text = c.text.split(search).join(replacement);
-      return text === c.text ? c : { ...c, text, words: [], translation: null };
+      return text === c.text
+        ? c
+        : {
+            ...c,
+            text,
+            words: [],
+            translation: null,
+            ...(c.suspicions ? { suspicions: [], diagnostics: {} } : {}),
+          };
     });
   }
 
@@ -164,7 +177,7 @@ const CueEditor = (() => {
     const options = settings.captions;
     let end = 0;
     return cues.flatMap((c, index) => {
-      const messages = [];
+      const messages = [...(c.suspicions || [])];
       if (
         !Number.isFinite(c.start) ||
         !Number.isFinite(c.end) ||
@@ -198,10 +211,15 @@ const CueEditor = (() => {
     });
   }
 
+  function removeSuspicions(cues) {
+    return cues.filter((cue) => !cue.suspicions?.length);
+  }
+
   return {
     shiftCues,
     replaceText,
     quality,
+    removeSuspicions,
     activeIndex,
     splitCue,
     mergeCues,

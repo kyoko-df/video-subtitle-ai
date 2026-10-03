@@ -1,9 +1,25 @@
 from __future__ import annotations
 
+import json
 import os
+import tempfile
 from contextlib import contextmanager
+from pathlib import Path
 
 from .models import SubtitleError
+
+
+def atomic_json(path: Path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=".save-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(data, stream, ensure_ascii=False, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, path)
+    finally:
+        Path(name).unlink(missing_ok=True)
 
 
 @contextmanager

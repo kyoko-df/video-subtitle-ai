@@ -14,7 +14,7 @@ from shengmu import lmstudio
 from shengmu.diagnostics import redacted_traceback
 from shengmu.models import Cancelled, Segment, SubtitleError, Transcript, Word
 from shengmu.server import create_app
-from shengmu.translation import translate
+from shengmu.translation import TranslationOptions, translate
 
 
 def response_for(batch):
@@ -36,7 +36,18 @@ def response_for(batch):
 def local_server(monkeypatch):
     def handle(request):
         if request.method == "GET":
-            return 200, {"data": [{"id": "local-instruct"}, {"id": "local-instruct"}]}
+            return 200, {
+                "models": [
+                    {
+                        "key": "local-instruct",
+                        "type": "llm",
+                        "format": "gguf",
+                        "loaded_instances": [{"config": {"parallel": 2, "context_length": 8192}}],
+                        "capabilities": {"reasoning": {"allowed_options": ["off", "on"]}},
+                    },
+                    {"key": "text-embedding", "type": "embedding"},
+                ]
+            }
         return 200, response_for(json.loads(request.body["messages"][1]["content"]))
 
     state = SimpleNamespace(requests=[], closed=0, handle=handle)
@@ -131,6 +142,7 @@ def test_local_translation_character_limit(local_server):
         [{"id": True, "text": "x"}],
         [{"id": "0", "text": "x"}],
         [{"id": 0, "text": " "}],
+        [{"id": 0, "text": "\x00"}],
         [{"id": 0, "text": None}],
         [{"text": "x"}],
         [None],
@@ -156,7 +168,7 @@ def test_later_batch_failure_is_atomic(local_server):
     original = transcript(9)
     with pytest.raises(SubtitleError, match="HTTP 500"):
         translate(original, "zh", "local-instruct", provider="lmstudio")
-    assert len(local_server.requests) == 2
+    assert len(local_server.requests) == 4
     assert all(c.translation == "旧译文" for c in original.segments)
 
 
@@ -191,7 +203,7 @@ def test_local_cancellation_preserves_original(local_server, stage):
     original = transcript(1 if stage == "last" else 9)
 
     def progress(*args):
-        if stage in {"between", "last"}:
+        if stage in {"between", "last"} and args[0] > 0:
             cancel.set()
 
     with pytest.raises(Cancelled):
@@ -248,11 +260,11 @@ def test_local_inventory_and_optional_auth(local_server, monkeypatch):
     assert (request.host, request.port, request.path, request.timeout) == (
         "::1",
         4321,
-        "/v1/models",
+        "/api/v1/models",
         8,
     )
     assert request.headers["Authorization"] == "Bearer local-test-secret"
-    local_server.handle = lambda request: (200, {"data": []})
+    local_server.handle = lambda request: (200, {"models": []})
     assert lmstudio.models() == []
 
 
@@ -291,7 +303,7 @@ def test_unavailable_local_server(local_server, failure):
         raise failure
 
     local_server.handle = unavailable
-    with pytest.raises(SubtitleError, match="Developer"):
+    with pytest.raises(SubtitleError, match="Developer|响应超时|连接中断"):
         lmstudio.models()
     assert local_server.closed == 1
 
@@ -330,7 +342,7 @@ def test_local_api_translation_export_and_preferences_persist(
         assert not config["openai_key_configured"]
         assert "LM_STUDIO_API_KEY" not in config
         headers = {"X-Session-Token": config["token"]}
-        assert client.get("/api/translation/models").json() == {"models": ["local-instruct"]}
+        assert client.get("/api/translation/models").json()["models"] == ["local-instruct"]
         upload = client.post(
             "/api/media", params={"name": media.name}, content=media.read_bytes(), headers=headers
         )
@@ -339,7 +351,12 @@ def test_local_api_translation_export_and_preferences_persist(
         ).json()["id"]
         assert wait_job(client, job_id)["status"] == "done"
         endpoint = f"/api/jobs/{job_id}/translate"
-        settings = {"provider": "lmstudio", "target": "zh", "model": "local-instruct"}
+        settings = {
+            "provider": "lmstudio",
+            "target": "zh",
+            "model": "local-instruct",
+            "resume": False,
+        }
         assert client.post(endpoint, json=settings, headers=headers).status_code == 202
         done = wait_job(client, job_id, True)
         assert done["revision"] == 1 and done["operation"]["status"] == "done"
@@ -398,3 +415,280 @@ def test_local_auth_token_is_redacted(monkeypatch):
     except ValueError:
         output = redacted_traceback()
     assert "local-private-token" not in output and "localhost" not in output
+
+
+def test_checkpoint_failure_resumes_only_missing_cues(local_server, tmp_path):
+    checkpoint = tmp_path / "resume.json"
+    handle = local_server.handle
+    local_server.handle = lambda r: handle(r) if len(local_server.requests) == 1 else (401, {})
+    original = transcript(9)
+    with pytest.raises(SubtitleError, match="认证"):
+        translate(original, "zh", "local-instruct", provider="lmstudio", checkpoint=checkpoint)
+    assert len(json.loads(checkpoint.read_text())["translations"]) == 8
+    assert all(c.translation == "旧译文" for c in original.segments)
+    local_server.handle = handle
+    stats = []
+    result = translate(
+        original,
+        "zh",
+        "local-instruct",
+        provider="lmstudio",
+        checkpoint=checkpoint,
+        options=TranslationOptions(timeout=600, batch_size=4),
+        details=stats.append,
+    )
+    assert len(local_server.requests) == 3
+    assert json.loads(local_server.requests[-1].body["messages"][1]["content"]) == [
+        {"id": 8, "text": "Line 8"}
+    ]
+    assert stats[-1]["restored_cues"] == 8 and stats[-1]["completed_cues"] == 9
+    local_server.handle = lambda r: (_ for _ in ()).throw(AssertionError("no inference expected"))
+    assert (
+        translate(
+            original, "zh", "local-instruct", provider="lmstudio", checkpoint=checkpoint
+        ).segments
+        == result.segments
+    )
+
+
+def test_checkpoint_rejects_changed_input_and_corruption(local_server, tmp_path):
+    checkpoint = tmp_path / "resume.json"
+    original = transcript()
+    translate(original, "zh", "local-instruct", provider="lmstudio", checkpoint=checkpoint)
+    changed = replace(original, segments=[replace(original.segments[0], text="Changed")])
+    with pytest.raises(SubtitleError, match="不一致"):
+        translate(changed, "zh", "local-instruct", provider="lmstudio", checkpoint=checkpoint)
+    checkpoint.write_text("{")
+    with pytest.raises(SubtitleError, match="损坏"):
+        translate(original, "zh", "local-instruct", provider="lmstudio", checkpoint=checkpoint)
+    translate(
+        original, "zh", "local-instruct", provider="lmstudio", checkpoint=checkpoint, resume=False
+    )
+    assert len(json.loads(checkpoint.read_text())["translations"]) == 1
+
+
+def test_new_run_resets_old_checkpoint_even_when_it_fails(local_server, tmp_path):
+    checkpoint = tmp_path / "resume.json"
+    original = transcript()
+    translate(original, "zh", "local-instruct", provider="lmstudio", checkpoint=checkpoint)
+    local_server.handle = lambda r: (401, {})
+    with pytest.raises(SubtitleError):
+        translate(
+            original,
+            "zh",
+            "local-instruct",
+            provider="lmstudio",
+            checkpoint=checkpoint,
+            resume=False,
+        )
+    assert json.loads(checkpoint.read_text())["translations"] == {}
+
+
+def test_cancel_after_batch_saves_checkpoint(local_server, tmp_path):
+    checkpoint, cancel = tmp_path / "resume.json", Event()
+
+    def progress(amount, message):
+        if 0 < amount < 1:
+            cancel.set()
+
+    with pytest.raises(Cancelled):
+        translate(
+            transcript(9),
+            "zh",
+            "local-instruct",
+            progress,
+            cancel,
+            "lmstudio",
+            checkpoint=checkpoint,
+        )
+    assert len(json.loads(checkpoint.read_text())["translations"]) >= 8
+
+
+def test_recursive_split_retains_valid_children_and_reports_stats(local_server, tmp_path):
+    handle = local_server.handle
+
+    def limited(request):
+        batch = json.loads(request.body["messages"][1]["content"])
+        return (400, {"error": "context length exceeded"}) if len(batch) > 2 else handle(request)
+
+    local_server.handle = limited
+    stats = []
+    result = translate(
+        transcript(8),
+        "zh",
+        "local-instruct",
+        provider="lmstudio",
+        checkpoint=tmp_path / "resume.json",
+        details=stats.append,
+    )
+    assert all(c.translation == "译文" for c in result.segments)
+    assert len(local_server.requests) == 7 and stats[-1]["splits"] == 3
+    assert stats[-1]["completed_batches"] == 1
+
+
+def test_format_failure_splits_then_stops_on_bad_single_cue(local_server, tmp_path):
+    handle = local_server.handle
+
+    def partial(request):
+        batch = json.loads(request.body["messages"][1]["content"])
+        if len(batch) > 1 or batch[0]["id"] == 1:
+            return 200, response_for([])
+        return handle(request)
+
+    local_server.handle = partial
+    checkpoint = tmp_path / "resume.json"
+    with pytest.raises(SubtitleError, match="第 2 条"):
+        translate(transcript(2), "zh", "local-instruct", provider="lmstudio", checkpoint=checkpoint)
+    assert json.loads(checkpoint.read_text())["translations"] == {"0": "译文"}
+
+
+def test_bounded_concurrency_out_of_order_alignment(local_server, monkeypatch, tmp_path):
+    from threading import Barrier, Lock
+
+    lock, barrier = Lock(), Barrier(2)
+    active, maximum = 0, 0
+
+    def completion(model, batch, target, schema, cancel, options):
+        nonlocal active, maximum
+        with lock:
+            active += 1
+            maximum = max(maximum, active)
+        barrier.wait(timeout=3)
+        if batch[0]["id"] % 2 == 0:
+            time.sleep(0.03)
+        with lock:
+            active -= 1
+        return json.dumps(
+            {"translations": [{"id": c["id"], "text": f"译{c['id']}"} for c in batch]}
+        )
+
+    monkeypatch.setattr(lmstudio, "completion", completion)
+    stats = []
+    result = translate(
+        transcript(4),
+        "zh",
+        "local-instruct",
+        provider="lmstudio",
+        options=TranslationOptions(concurrency=2, batch_size=1),
+        checkpoint=tmp_path / "resume.json",
+        details=stats.append,
+    )
+    assert maximum == 2 and [c.translation for c in result.segments] == ["译0", "译1", "译2", "译3"]
+    assert stats[-1]["completed_cues"] == 4 and stats[-1]["running_batches"] == 0
+
+
+@pytest.mark.parametrize("status, expected_calls", [(429, 2), (503, 2), (401, 1), (404, 1)])
+def test_retry_classification(local_server, status, expected_calls):
+    handle = local_server.handle
+    local_server.handle = lambda r: (status, {}) if len(local_server.requests) == 1 else handle(r)
+    if expected_calls == 2:
+        translate(transcript(), "zh", "local-instruct", provider="lmstudio")
+    else:
+        with pytest.raises(SubtitleError):
+            translate(transcript(), "zh", "local-instruct", provider="lmstudio")
+    assert len(local_server.requests) == expected_calls
+
+
+def test_native_thinking_control_excludes_reasoning_and_disables_storage(local_server):
+    handle = local_server.handle
+
+    def native(request):
+        if request.method == "GET":
+            return handle(request)
+        assert request.path == "/api/v1/chat"
+        assert request.body["reasoning"] == "off" and request.body["store"] is False
+        assert request.body["max_output_tokens"] == 1024
+        batch = json.loads(request.body["input"])
+        return 200, {
+            "output": [
+                {"type": "reasoning", "content": "ignore"},
+                {
+                    "type": "message",
+                    "content": json.dumps(
+                        {"translations": [{"id": c["id"], "text": "正文"} for c in batch]}
+                    ),
+                },
+            ]
+        }
+
+    local_server.handle = native
+    result = translate(
+        transcript(),
+        "zh",
+        "local-instruct",
+        provider="lmstudio",
+        options=TranslationOptions(reasoning="off", max_tokens=1024),
+    )
+    assert result.segments[0].translation == "正文"
+
+
+def test_unsupported_reasoning_and_parallel_are_rejected_before_inference(local_server):
+    with pytest.raises(SubtitleError, match="思考"):
+        translate(
+            transcript(),
+            "zh",
+            "local-instruct",
+            provider="lmstudio",
+            options=TranslationOptions(reasoning="low"),
+        )
+    local_server.handle = lambda r: (
+        200,
+        {"models": [{"key": "local-instruct", "loaded_instances": [{"config": {"parallel": 1}}]}]},
+    )
+    with pytest.raises(SubtitleError, match="容量"):
+        translate(
+            transcript(),
+            "zh",
+            "local-instruct",
+            provider="lmstudio",
+            options=TranslationOptions(concurrency=2),
+        )
+    assert all(r.method == "GET" for r in local_server.requests)
+
+
+def test_inventory_fallback_only_for_unsupported_endpoints(local_server):
+    def fallback(request):
+        if request.path == "/api/v1/models":
+            return 404, {}
+        if request.path == "/api/v0/models":
+            return 200, {
+                "data": [
+                    {"id": "text", "type": "vlm", "state": "loaded"},
+                    {"id": "embedding", "type": "embeddings"},
+                ]
+            }
+        raise AssertionError("unexpected fallback")
+
+    local_server.handle = fallback
+    inventory = lmstudio.model_inventory()
+    assert len(inventory) == 1 and inventory[0]["id"] == "text" and inventory[0]["loaded"]
+    local_server.requests.clear()
+    local_server.handle = lambda r: (401, {})
+    with pytest.raises(SubtitleError, match="认证"):
+        lmstudio.models()
+    assert len(local_server.requests) == 1
+    local_server.requests.clear()
+    local_server.handle = lambda r: (200, {"data": []})
+    with pytest.raises(SubtitleError, match="列表无效"):
+        lmstudio.models()
+    assert len(local_server.requests) == 1
+
+
+def test_configurable_timeout_and_permission_are_distinct(local_server, monkeypatch):
+    monkeypatch.setenv("LM_STUDIO_TIMEOUT", "600")
+    translate(transcript(), "zh", "local-instruct", provider="lmstudio")
+    assert local_server.requests[-1].timeout == 600
+    translate(
+        transcript(),
+        "zh",
+        "local-instruct",
+        provider="lmstudio",
+        options=TranslationOptions(timeout=300),
+    )
+    assert local_server.requests[-1].timeout == 300
+    local_server.handle = lambda r: (_ for _ in ()).throw(PermissionError("private"))
+    with pytest.raises(SubtitleError, match="网络权限"):
+        lmstudio.models()
+    monkeypatch.setenv("LM_STUDIO_TIMEOUT", "inf")
+    with pytest.raises(SubtitleError, match="超时"):
+        translate(transcript(), "zh", "local-instruct", provider="lmstudio")

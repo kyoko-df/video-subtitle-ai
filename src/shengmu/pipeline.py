@@ -63,7 +63,15 @@ def transcribe(
             options.engine,
             model,
             aligned,
-            {"audio_track": track_index, "audio_offset": offset, "audio_duration": audio_duration},
+            {
+                "audio_track": track_index,
+                "audio_offset": offset,
+                "audio_duration": audio_duration,
+                "asr_profile": options.asr_profile,
+                "asr_parameters": options.decoding_parameters()
+                if options.engine == "local"
+                else {},
+            },
         )
         update("ready", 0.96, f"识别完成，共 {len(transcript.segments)} 条字幕。")
         return transcript

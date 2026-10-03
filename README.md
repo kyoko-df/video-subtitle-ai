@@ -17,7 +17,9 @@
 - 预览与校对支持新增 / 拆分 / 合并 / 删除 / 撤销 / 重做、查找替换、循环播放、播放速度、整体偏移、波形定位、时间轴缩放与拖动调时。
 - 自定义排版规则与质量提示，字幕样式、双语字幕、说话人标注、逐词高亮，以及烧录视频 / 可切换字幕轨导出。
 - 可选 OpenAI / 本机 LM Studio 文本翻译与本地 pyannote 说话人识别；模型下载、进度、管理和常用配置。
-- CLI 支持转写、查看音轨、JSON 格式转换和环境检查；拒绝意外覆盖输出或输入文件。
+- CLI 支持转写、翻译、一步双语导出、查看音轨、JSON 格式转换和环境检查；拒绝意外覆盖输出或输入文件。
+- 长视频翻译支持逐批检查点、恢复、有限重试、递归拆批和并发 1 / 2；工作台可配置超时、输出上限与模型支持的思考模式。
+- ASR 提供减少重复 / 轻声方案与高级阈值；疑似重复循环先标记，支持试听、批量删除和撤销。
 - GUI 仅监听本机地址；API Key 从服务器环境变量读取，前端不会收到 Key。
 
 ## 安装
@@ -118,9 +120,35 @@ LM Studio 方式先完成以下准备：
 
 1. 从 [LM Studio 官网](https://lmstudio.ai/download) 安装应用，在其中下载并加载支持目标语言及结构化输出的**文字对话模型**。语音识别的 Whisper 模型不能用于这里的文本翻译。
 2. 在 LM Studio 的 **Developer** 页面开启 **Start server**，默认端口为 `1234`，建议模型上下文至少 `8192`。模型是否支持结构化输出及实际翻译质量取决于所选模型，见 [LM Studio 结构化输出文档](https://lmstudio.ai/docs/developer/openai-compat/structured-output)。
-3. 在工作台选择“LM Studio 本地”，点击“刷新本地模型”，选择或填写模型标识，设置目标语言，再点击“翻译字幕”。多个模型时需自行选择文字对话模型。保存常用配置可记住翻译方式、模型和语言。
+3. 在工作台选择“LM Studio 本地”，点击“刷新本地模型”，选择或填写模型标识，设置目标语言，再点击“翻译字幕”。已知嵌入模型不会显示；可查看加载状态和服务能力。保存常用配置可记住翻译方式、模型、语言和翻译设置。
 
-本地方式通过 `/v1/chat/completions` 将字幕文本发给本机 LM Studio 服务，使用其 JSON Schema 输出；无需 `[openai]` 依赖或 OpenAI Key。请在 LM Studio 加载本机模型以进行本地推理。应用不代为安装 LM Studio 或下载其模型；工作台原有模型管理器仍用于语音识别模型。默认地址是 `http://127.0.0.1:1234/v1`，可在启动工作台前设置 `LM_STUDIO_BASE_URL` 更换本机端口（仅接受 `localhost`、`127.0.0.1` 或 `::1` 的 HTTP 地址）。LM Studio 开启认证时再设置 `LM_STUDIO_API_KEY`，Key 不会返回给浏览器。模型列表超时为 8 秒，翻译每次请求超时为 180 秒；每批最多 8 条 / 约 2000 个输入字符，单条长字幕不会拆分。取消需等待当前请求返回，后续批次停止。
+本地方式无需 `[openai]` 依赖或 OpenAI Key。默认地址是 `http://127.0.0.1:1234/v1`，`LM_STUDIO_BASE_URL` 仅接受本机 HTTP 的 `localhost`、`127.0.0.1` 或 `::1`；认证时设置 `LM_STUDIO_API_KEY`，Key 不返回浏览器。应用不代为安装 LM Studio 或下载文字模型；原有模型管理器用于语音识别模型。
+
+模型列表优先使用原生 v1，旧版接口回退到 v0 / 兼容接口。思考采用“模型默认”时使用 `/v1/chat/completions` 的严格 JSON Schema；显式控制思考时使用模型声明支持的原生 `/api/v1/chat`，通过提示词要求 JSON，再严格核对字幕编号。原生接口未声明 JSON Schema 参数，因此这种模式依靠程序校验，格式失败会拆批。参见 [模型能力](https://lmstudio.ai/docs/developer/rest/list) 和 [原生思考设置](https://lmstudio.ai/docs/developer/rest/chat)。
+
+### 长视频翻译与恢复
+
+工作台展开“翻译设置与恢复”可调整以下参数，CLI 提供对应选项：
+
+| 参数            | 默认                       | 范围 / 用途                                           |
+| --------------- | -------------------------- | ----------------------------------------------------- |
+| 并发            | 1                          | 1 / 2；服务报告容量不足时拒绝，未报告时可能由服务排队 |
+| 每批字幕 / 字符 | 8 / 2000                   | 1–40 / 100–12000；单条字幕不拆开                      |
+| 临时故障重试    | 2                          | 0–3；认证、配置和超时不会盲目重试                     |
+| 超时            | 本地 180 秒、OpenAI 120 秒 | 5–3600 秒；本地可用 `LM_STUDIO_TIMEOUT` 改默认值      |
+| 输出上限        | 4096 tokens                | 128–32768；过少可能使正文截断                         |
+| 模型思考        | 模型默认                   | 仅开放服务报告支持的选项；旧版本可在 LM Studio 中设置 |
+| 恢复            | 开启                       | 只翻译当前字幕 / 设置尚未完成的部分                   |
+
+每批通过校验后写入本机 `.translation-cache/`；失败或取消不会修改正式字幕，已保存的译文下次可恢复。修改原文、时间、目标语言、模型标识或思考模式会隔离旧检查点；更换同一标识背后的权重 / 模板时请取消恢复选项重新翻译。超时、输出上限、批大小、重试和并发可以调整后继续。不要让多个 CLI 进程同时写同一检查点。缓存包含字幕文本，随输出 / 项目目录管理。
+
+上下文、截断和格式错误会拆半批次，单条仍失败时明确报出编号。进度显示完成字幕、恢复数量、运行时间和重试 / 拆批次数；取消需等待当前请求返回或超时，之后停止提交新批次。并发 2 的实际速度由模型格式、服务版本、内存和服务设置决定，不能保证报告中的 2.1 倍收益。
+
+在“识别提示与质量选项”可选择 `standard`、`less-repetition` 或 `soft-speech`，并覆盖压缩率、平均概率、无语音和 VAD 阈值。后两套方案需要试听验证：减少重复可能漏低置信度对白，轻声方案可能增加噪声字幕。重复检测仅标记；质量检查可定位，删除标记字幕可撤销。JSON v2 增加可选 `diagnostics` 和 `suspicions`，旧 JSON 仍可读取。
+
+`shengmu doctor` 检查实际烧录滤镜和编码器，无网络请求；`shengmu doctor --network` 额外探测模型下载服务及本机 LM Studio，不下载模型或执行推理。烧录需要 `ass` / `libx264` / `aac`，字幕轨需要 `aac` / `mov_text`，不依赖 `drawtext`。缺少能力时工作台禁用相应导出，后端也提前拒绝。程序在导入引擎前默认设置 `ORT_DISABLE_TELEMETRY=1`，不会删除已有文件。
+
+脚本轮询 **转写看 `job.status`，翻译 / 烧录 / 封装看 `job.operation.status`**。翻译时转写状态仍为 `done`；不能据此判断翻译完成。操作终态为 `done` / `error` / `cancelled`，翻译详情在 `operation.stats`。重启后中断操作保留设置和进度，标记 `error` / `interrupted=true`，同设置继续可恢复检查点。详细设计和状态字段见 [优化方案](docs/optimization-plan.md)。
 
 自动区分说话人是额外依赖，建议独立 Python 3.11 / 3.12 环境：
 
@@ -131,7 +159,6 @@ shengmu gui
 ```
 
 首次使用需在 [Community-1 模型页面](https://huggingface.co/pyannote/speaker-diarization-community-1) 接受访问条款，然后由程序下载模型并在本机推理；本项目不会代你接受条款。也可设置 `SHENGMU_DIARIZATION_MODEL=/path/to/community-1` 使用离线模型目录。已知人数时可填写说话人数，程序按词时间和说话人区间切分字幕；名称可在校对行中修改。未安装引擎或未配置权限时会给出具体提示，普通转写和手动标注仍可使用。基础 `[all]` 不含体积较大的 pyannote / PyTorch。
-
 
 ## CLI
 
@@ -198,6 +225,16 @@ shengmu transcribe video.mp4 --quiet --format srt json
 # 已有字幕转格式，不再次调用 AI
 shengmu export subtitles/video.json --format vtt ass --output-dir converted
 
+# 已有 JSON 翻译为中文，默认输出双语 SRT + JSON
+shengmu translate subtitles/video.json --target zh --provider lmstudio --model your-model
+# 同命令重跑默认恢复；可调整超时 / 并发后继续
+shengmu translate subtitles/video.json --target zh --model your-model --timeout 600 --concurrency 2
+# 一步：转写 → 翻译 → 双语导出，翻译失败后重跑可恢复 ASR
+shengmu transcribe video.mp4 --language ja --model medium --translate-to zh \
+  --translation-model your-model --translation-timeout 600 --export-mode bilingual --format srt json
+# 从已有译文重新导出，不调用模型
+shengmu export subtitles/video.translated.json --export-mode bilingual --format srt
+
 # 允许覆盖已有字幕，仍禁止覆盖输入文件
 shengmu transcribe video.mp4 --format srt --overwrite
 ```
@@ -205,7 +242,7 @@ shengmu transcribe video.mp4 --format srt --overwrite
 输出示例：
 
 ```json
-{"segments": 42, "language": "zh", "files": ["/path/to/subtitles/video.srt"]}
+{ "segments": 42, "language": "zh", "files": ["/path/to/subtitles/video.srt"] }
 ```
 
 命令成功返回 0，输入 / 依赖 / 转写错误返回 1，用户中断返回 130。也可使用 `python -m shengmu` 代替 `shengmu`。诊断时加 `--verbose`（放在子命令前后均可）输出经过 API Key / URL 脱敏的异常链。GUI 后台失败也会记录脱敏堆栈，不会向前端返回堆栈。
@@ -222,8 +259,8 @@ shengmu transcribe video.mp4 --format srt --overwrite
   "language": "zh",
   "engine": "local",
   "model": "small",
-  "segments": [{"start": 0.5, "end": 2.1, "text": "你好，世界。"}],
-  "metadata": {"audio_track": 1, "audio_offset": 0.0, "audio_duration": 10.0}
+  "segments": [{ "start": 0.5, "end": 2.1, "text": "你好，世界。" }],
+  "metadata": { "audio_track": 1, "audio_offset": 0.0, "audio_duration": 10.0 }
 }
 ```
 
@@ -383,11 +420,17 @@ Short speech is not artificially extended to one second. Missing / invalid word 
 
 ### Data, development, and limitations
 
-JSON uses schema version 1 and timestamps in seconds; it can be edited and re-exported without the original media or another AI request. SRT / VTT use milliseconds, ASS uses centiseconds, and TXT has no timestamps. SRT retains raw text such as `AT&T`; VTT escapes markup; ASS style-control characters are neutralized.
+JSON uses schema version 2 (and reads version 1) and timestamps in seconds; it can be edited and re-exported without the original media or another AI request. SRT / VTT use milliseconds, ASS uses centiseconds, and TXT has no timestamps. SRT retains raw text such as `AT&T`; VTT escapes markup; ASS style-control characters are neutralized.
 
 GUI includes batch jobs, project history, ZIP downloads, draft recovery, find/replace, redo, loop playback, waveform timing, custom layout/quality checks, subtitle styles, bilingual editing, video burn-in and MP4 subtitle tracks. Optional translation uses OpenAI Responses / Structured Outputs or a local LM Studio server; optional diarization uses pyannote Community-1 (install `[diarization]`, configure `HF_TOKEN` after accepting model conditions). JSON v2 stores word timing, speaker and translation and reads v1. Word highlighting supports original captions; estimated timing is marked. ASR overlaps are normalized, while manual overlaps can be enabled explicitly; diarization does not separate overlapping voices. Music, accents, noisy recordings, and overlapping speech require proofreading. Delayed audio offsets are restored; damaged or discontinuous media timestamps may need conversion first.
 
-For local translation, [install LM Studio](https://lmstudio.ai/download), download/load a text chat model that supports your languages and [structured output](https://lmstudio.ai/docs/developer/openai-compat/structured-output), and start the server in its **Developer** tab. A context size of at least `8192` is recommended. In the workbench, select **LM Studio 本地**, refresh the model list, choose or enter a text model identifier, then translate. Save common settings to remember the provider, model and target language. This sends subtitle text to the loopback `/v1/chat/completions` endpoint, requires neither an OpenAI key nor the `[openai]` extra, and preserves original text, timing, words and speakers. Load a model on this computer in LM Studio for local inference. Shengmu does not install LM Studio or download its models; its existing model manager covers ASR models. `LM_STUDIO_BASE_URL` defaults to `http://127.0.0.1:1234/v1` and accepts only HTTP loopback hosts (`localhost`, `127.0.0.1`, `::1`); set `LM_STUDIO_API_KEY` only when LM Studio authentication is enabled. Model discovery times out after 8 seconds, translation after 180 seconds per request. Local batches contain up to 8 cues / roughly 2000 characters without splitting individual cues. All batches must succeed before translations are applied; failure/cancellation preserves existing translations. Cancellation waits for the current request to return. Model support, quality and memory requirements vary.
+For local translation, [install LM Studio](https://lmstudio.ai/download), load a text model and start **Developer → Start server**. Select **LM Studio 本地** in the workbench. Native model discovery filters known embedding models and reports loaded state, context and parallel capacity, with v0 / compatible fallbacks for older versions. `LM_STUDIO_BASE_URL` defaults to `http://127.0.0.1:1234/v1` and only accepts HTTP loopback hosts; `LM_STUDIO_API_KEY` is optional authentication. No OpenAI extra/key is required. Shengmu does not install LM Studio or download its models.
+
+Version 0.3.0 adds `shengmu translate input.json --target zh --model your-model` (bilingual SRT + JSON by default), `transcribe --translate-to zh --translation-model your-model`, and `export --export-mode bilingual`. Validated batches are saved in `.translation-cache/`; failures preserve formal subtitles, and rerunning resumes missing cues. One-step runs also cache ASR results. Changed text/times or translation identity invalidate checkpoints; use `--no-resume` after changing model weights under the same identifier. Existing final outputs still require `--overwrite`.
+
+Translation settings expose concurrency 1 / 2, bounded transient retries, recursive batch splitting, timeout, output budget and model-supported reasoning. Local timeout defaults to 180 seconds (`LM_STUDIO_TIMEOUT`), OpenAI to 120; `--timeout` allows 5–3600. Default reasoning uses compatible strict JSON Schema; explicit reasoning uses the native chat API with prompt-based JSON and strict application validation. Parallel speedups depend on model/server capacity. Repetition is flagged for review and reversible deletion; ASR profiles and threshold overrides are available. `doctor` checks required FFmpeg filters/encoders without network access; `doctor --network` adds explicit connectivity probes. ONNX Runtime telemetry is disabled by default before engine imports.
+
+Poll `job.status` for ASR, but `job.operation.status` for translation/video operations. Translation progress details are in `operation.stats`; `job.status=done` does not mean translation has finished. Interrupted operations retain settings/progress for recovery. See the [implementation design](docs/optimization-plan.md) and [validation record](VALIDATION.md).
 
 Cancellation is cooperative: FFmpeg can stop immediately, while model loading / inference or an in-flight API request must return first. Already-sent requests may be billed. This is a single-user local tool, not a public multi-user service; CLI outputs and GUI projects both persist. The model manager can download/resume/remove managed models and show existing shared cache availability; common settings can be saved.
 
@@ -517,11 +560,17 @@ PowerShell では `$env:OPENAI_API_KEY="自分の API キー"` を使います�
 
 ### データ・開発・制約
 
-JSON はスキーマバージョン 1、時間単位は秒です。元動画や AI の再実行なしで編集 / 再出力できます。SRT / VTT はミリ秒、ASS は 1/100 秒の精度、TXT は時間情報なしです。SRT は `AT&T` などの元テキストを保持し、VTT はマークアップをエスケープ、ASS はスタイル制御文字を無害化します。
+JSON はスキーマバージョン 2（v1 も読み込み可能）、時間単位は秒です。元動画や AI の再実行なしで編集 / 再出力できます。SRT / VTT はミリ秒、ASS は 1/100 秒の精度、TXT は時間情報なしです。SRT は `AT&T` などの元テキストを保持し、VTT はマークアップをエスケープ、ASS はスタイル制御文字を無害化します。
 
 バッチ処理、履歴、ZIP、自動下書き、検索置換、やり直し、ループ再生、波形・ドラッグ調整、レイアウト・品質確認、字幕スタイル、二言語字幕、焼き込み / MP4 字幕トラックを利用できます。翻訳は OpenAI Responses / Structured Outputs または本機の LM Studio、任意の自動話者識別は pyannote Community-1（`[diarization]` とモデル利用条件への同意、`HF_TOKEN` が必要）を使用します。JSON v2 は単語時刻・話者・訳文を保持し、v1 も読み込めます。単語ハイライトは原文に対応し、推定時刻を明示します。手動編集の重複は設定で許可できます。自動話者識別は同時発話の音源分離ではありません。音楽、訛り、雑音、同時発話では特に校正が必要です。音声開始オフセットは動画タイムラインに復元しますが、破損 / 不連続なタイムスタンプのメディアは事前変換を推奨します。
 
-ローカル翻訳には [LM Studio](https://lmstudio.ai/download) をインストールし、対象言語と [構造化出力](https://lmstudio.ai/docs/developer/openai-compat/structured-output) に対応するテキスト対話モデルをダウンロード・読み込み、**Developer → Start server** を有効にします。コンテキストは `8192` 以上を推奨します。作業画面で **LM Studio 本地** を選び、モデル一覧を更新して識別子を選択 / 入力し、翻訳します。よく使う設定を保存すると方式・モデル・対象言語を復元できます。字幕テキストは本機の `/v1/chat/completions` に送信され、OpenAI Key と `[openai]` は不要です。原文・時刻・単語時刻・話者を保持し、全バッチ成功後のみ訳文を反映します。失敗 / キャンセル時は既存の訳文を保持します。本機で推論するには LM Studio に本機のモデルを読み込んでください。本アプリは LM Studio のインストールやモデル取得を行いません。既存のモデル管理は音声認識用です。`LM_STUDIO_BASE_URL` の既定値は `http://127.0.0.1:1234/v1` で、HTTP のループバックホストのみ許可します。認証を有効にした場合のみ `LM_STUDIO_API_KEY` を設定します。一覧取得は 8 秒、翻訳は各リクエスト 180 秒でタイムアウトします。1 バッチは最大 8 字幕 / 約 2000 文字で、単独の字幕は分割しません。キャンセルは実行中のリクエストが戻るまで待ちます。対応機能・翻訳品質・必要メモリはモデルに依存します。
+ローカル翻訳には [LM Studio](https://lmstudio.ai/download) で対話モデルを読み込み、**Developer → Start server** を有効にします。原生モデル一覧から既知の埋め込みモデルを除外し、読み込み状態・コンテキスト・同時処理容量を表示します。旧版は v0 / 互換 API にフォールバックします。`LM_STUDIO_BASE_URL` は既定 `http://127.0.0.1:1234/v1`、HTTP ループバックのみです。認証時は `LM_STUDIO_API_KEY` を設定します。OpenAI Key と追加依存は不要で、本アプリは LM Studio のインストールやモデル取得を行いません。
+
+0.3.0 では `shengmu translate input.json --target zh --model your-model`（二言語 SRT + JSON）、`transcribe --translate-to zh --translation-model your-model`、`export --export-mode bilingual` が利用できます。検証済みバッチを `.translation-cache/` に保存し、失敗後も正式字幕を保ったまま再実行で続行できます。一括処理は ASR 結果もキャッシュします。原文・時刻・翻訳設定を変えると別のチェックポイントを使用します。同じ識別子のモデル重みを変更した場合は `--no-resume` で再処理してください。既存の正式出力は `--overwrite` が必要です。
+
+同時処理 1 / 2、限定再試行、再帰的バッチ分割、タイムアウト、出力上限、モデル対応の思考設定を調整できます。ローカルの既定は 180 秒（`LM_STUDIO_TIMEOUT`）、OpenAI は 120 秒で、指定範囲は 5–3600 秒です。既定思考は厳格 JSON Schema、明示的思考は原生 chat API の JSON 指示とアプリ側の厳格検証を使用します。高速化はモデルとサービスに依存します。疑わしい反復をマークし、確認・削除・元に戻す操作を提供します。ASR の反復抑制 / 小声設定と閾値調整も可能です。`doctor` は必要な FFmpeg 機能を確認し、`--network` 指定時のみ接続を探査します。エンジンの読み込み前に ONNX Runtime 遥測を既定で無効化します。
+
+ASR は `job.status`、翻訳と動画出力は `job.operation.status` を確認します。翻訳進捗は `operation.stats` にあります。中断された操作は設定と進捗を保って再開できます。[設計](docs/optimization-plan.md) と [検証記録](VALIDATION.md) を参照してください。
 
 キャンセルは協調的です。FFmpeg は停止できますが、モデル読み込み / 推論や送信済み API リクエストは処理が戻るまで待つ必要があります。送信済みリクエストは課金される場合があります。本ツールはローカルの単一ユーザー向けで、公開マルチユーザーサービスではありません。CLI の出力は保存され、GUI のプロジェクトと下書きも保存されます。モデル管理ではダウンロード、再開、管理対象モデルの削除と共有キャッシュの確認が可能です。
 

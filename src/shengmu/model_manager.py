@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from .errors import local_model_error
 from .models import SubtitleError
 
 MODELS = ("tiny", "base", "small", "medium", "large-v3", "turbo")
@@ -91,4 +92,4 @@ def download(root, name, update, cancel=None):
     except SubtitleError:
         raise
     except Exception as exc:
-        raise SubtitleError("模型下载失败，请检查网络和磁盘空间，可重试续传。") from exc
+        raise SubtitleError(f"模型下载失败：{local_model_error(exc, downloading=True)}") from exc

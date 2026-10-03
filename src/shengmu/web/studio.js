@@ -25,6 +25,96 @@ let translationProvider = "openai",
   translationRequest = 0,
   translationLoading = false;
 const translationModels = { openai: "gpt-4o-mini", lmstudio: "" };
+let translationInventory = [];
+const asrFields = [
+  "compression_ratio_threshold",
+  "log_prob_threshold",
+  "no_speech_threshold",
+  "vad_threshold",
+];
+const translationFields = [
+  "concurrency",
+  "batch_size",
+  "max_chars",
+  "timeout",
+  "retries",
+  "max_tokens",
+];
+
+function translationOptions() {
+  return {
+    ...Object.fromEntries(
+      translationFields.map((key) => [
+        key,
+        $("translation-" + key.replaceAll("_", "-")).value === ""
+          ? null
+          : Number($("translation-" + key.replaceAll("_", "-")).value),
+      ]),
+    ),
+    reasoning: $("translation-reasoning").value,
+    resume: $("translation-resume").checked,
+  };
+}
+
+function restoreProjectTranslation(job) {
+  const settings =
+    job.operation?.kind === "translate" ? job.operation.settings : null;
+  if (
+    !settings ||
+    !["openai", "lmstudio"].includes(settings.provider) ||
+    typeof settings.model !== "string" ||
+    typeof settings.target !== "string"
+  )
+    return;
+  translationModels[translationProvider] = $("translation-model").value;
+  translationProvider = settings.provider;
+  $("translation-provider").value = settings.provider;
+  $("translation-model").value = settings.model;
+  translationModels[translationProvider] = settings.model;
+  $("target-language").value = settings.target;
+  for (const key of translationFields)
+    if (settings[key] !== undefined)
+      $("translation-" + key.replaceAll("_", "-")).value = settings[key] ?? "";
+  $("translation-reasoning").value = settings.reasoning || "auto";
+  $("translation-resume").checked = settings.resume ?? true;
+  ++translationRequest;
+  translationLoading = false;
+  renderTranslationProvider();
+  if (translationProvider === "lmstudio") refreshTranslationModels();
+}
+
+function renderTranslationCapabilities() {
+  const local = $("translation-provider").value === "lmstudio";
+  const model = local
+    ? translationInventory.find(
+        (m) => m.id === $("translation-model").value.trim(),
+      )
+    : null;
+  for (const option of $("translation-reasoning").options)
+    option.disabled =
+      option.value !== "auto" &&
+      (!local || !(model?.reasoning_options || []).includes(option.value));
+  $("translation-reasoning").disabled = state.busy || state.saving || !local;
+  const unsupported = $("translation-reasoning").selectedOptions[0]?.disabled;
+  $("translate").disabled ||= !!unsupported;
+  $("translation-capabilities").textContent = model
+    ? [
+        model.loaded === true
+          ? "已加载"
+          : model.loaded === false
+            ? "尚未加载"
+            : "加载状态未知",
+        model.format,
+        model.context_length ? `上下文 ${model.context_length}` : "",
+        model.parallel ? `服务并发 ${model.parallel}` : "并发能力未报告",
+        unsupported ? "当前思考选项不受支持，请选择模型默认" : "",
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : local
+      ? "刷新模型后可查看加载状态和思考能力；默认方式可直接填写模型标识。"
+      : "使用模型默认思考设置。";
+}
 
 function jsonRequest(method, body) {
   return {
@@ -67,6 +157,15 @@ function jobSettings() {
     prompt: $("prompt").value,
     condition_on_previous_text: $("previous-text").checked,
     filter_hallucinations: $("filter-hallucinations").checked,
+    asr_profile: $("asr-profile").value,
+    ...Object.fromEntries(
+      asrFields.map((key) => [
+        key,
+        $(key.replaceAll("_", "-")).value === ""
+          ? null
+          : Number($(key.replaceAll("_", "-")).value),
+      ]),
+    ),
     diarize: $("diarize").checked,
     num_speakers: $("num-speakers").value
       ? Number($("num-speakers").value)
@@ -91,6 +190,10 @@ function applySettings(settings = {}) {
   for (const key of ["model", "language", "device", "prompt"])
     if (settings[key] !== undefined) $(key).value = settings[key] ?? "";
   if (settings.compute_type) $("compute").value = settings.compute_type;
+  if (settings.asr_profile) $("asr-profile").value = settings.asr_profile;
+  for (const key of asrFields)
+    if (settings[key] !== undefined)
+      $(key.replaceAll("_", "-")).value = settings[key] ?? "";
   for (const [key, id] of [
     ["condition_on_previous_text", "previous-text"],
     ["filter_hallucinations", "filter-hallucinations"],
@@ -113,6 +216,7 @@ function updateStudioButtons(editing) {
     "burn-video",
     "soft-video",
     "translate",
+    "delete-suspicions",
   ])
     $(id).disabled = !editing;
   $("redo").disabled = !editing || !state.redo.length;
@@ -123,12 +227,20 @@ function updateStudioButtons(editing) {
     ($("translation-provider").value === "openai" &&
       (!state.config?.openai_key_configured ||
         !state.config?.openai_engine_installed));
-  $("burn-video").disabled ||= !state.job?.media_available;
-  $("soft-video").disabled ||= !state.job?.media_available;
+  $("delete-suspicions").disabled ||= !state.cues.some(
+    (c) => c.suspicions?.length,
+  );
+  $("burn-video").disabled ||=
+    !state.job?.media_available ||
+    state.config?.ffmpeg_capabilities?.burn_supported === false;
+  $("soft-video").disabled ||=
+    !state.job?.media_available ||
+    state.config?.ffmpeg_capabilities?.soft_supported === false;
   for (const input of document.querySelectorAll(
     ".editor-tools input, .editor-tools select, .delivery-tools input, .delivery-tools select",
   ))
     input.disabled = state.saving || state.busy;
+  renderTranslationCapabilities();
   $("translation-model-refresh").disabled =
     state.saving || state.busy || translationLoading;
   $("operation-cancel").hidden = !["queued", "running"].includes(
@@ -146,6 +258,7 @@ function renderTranslationProvider() {
     ? "字幕文本会发给本机 LM Studio 服务。请先安装 LM Studio，下载并加载文字对话模型，在 Developer 页面启动服务；无需 OpenAI Key。"
     : "翻译会向配置的 OpenAI 服务发送字幕文本并使用 API 额度。";
   $("translation-model-options").replaceChildren();
+  if (!local) $("translation-reasoning").value = "auto";
   $("translation-model-status").hidden = !local;
   updateButtons();
 }
@@ -159,12 +272,17 @@ async function refreshTranslationModels() {
   status.textContent = "正在连接本机 LM Studio…";
   updateButtons();
   try {
-    const { models } = await api("/api/translation/models");
+    const { models, details } = await api("/api/translation/models");
     if (request !== translationRequest) return;
+    translationInventory = details || [];
     $("translation-model-options").replaceChildren(
       ...models.map((id) => {
         const option = document.createElement("option");
         option.value = id;
+        const model = translationInventory.find((m) => m.id === id);
+        option.label = model
+          ? `${model.name} · ${model.loaded === true ? "已加载" : model.loaded === false ? "未加载" : "状态未知"}`
+          : id;
         return option;
       }),
     );
@@ -172,7 +290,7 @@ async function refreshTranslationModels() {
       $("translation-model").value = models[0];
     translationModels.lmstudio = $("translation-model").value;
     status.textContent = models.length
-      ? `已连接，发现 ${models.length} 个模型。请选择文字对话模型；模型需支持结构化输出。`
+      ? `已连接，发现 ${models.length} 个文字模型，已排除已知的嵌入模型。选择模型后可查看能力。`
       : "服务已连接，但没有可用模型。请在 LM Studio 中下载文字对话模型后刷新。";
   } catch (error) {
     if (request !== translationRequest) return;
@@ -259,6 +377,7 @@ async function loadProjectResult(job, transcript, sequence) {
         : null;
   applySettings(job.request);
   applySettings(transcript.metadata);
+  restoreProjectTranslation(job);
   if (restored) applySettings(restored);
   state.cues = (restored?.segments || transcript.segments).map((c) => ({
     ...c,
@@ -366,13 +485,18 @@ async function refreshHistory() {
       const row = document.createElement("div");
       row.className = "job-row";
       row.classList.toggle("selected", job.id === state.job?.id);
-      const status =
-        {
-          done: "已完成",
-          error: "失败",
-          cancelled: "已取消",
-          queued: "排队中",
-        }[job.status] || Math.round(job.progress * 100) + "%";
+      const status = ["queued", "running"].includes(job.operation?.status)
+        ? `${job.operation.kind === "translate" ? "翻译" : "视频导出"} ${Math.round(job.operation.progress * 100)}%`
+        : job.operation?.interrupted
+          ? "操作中断，可继续"
+          : ["error", "cancelled"].includes(job.operation?.status)
+            ? `${job.operation.kind === "translate" ? "翻译" : "视频导出"}${job.operation.status === "error" ? "失败" : "已取消"}`
+            : {
+                done: "已完成",
+                error: "失败",
+                cancelled: "已取消",
+                queued: "排队中",
+              }[job.status] || Math.round(job.progress * 100) + "%";
       const title = makeButton(
         job.source +
           " · " +
@@ -812,8 +936,12 @@ function renderSubtitlePreview() {
 
 function renderOperation(job) {
   const op = job.operation;
+  const stats = op?.stats;
   $("operation-status").textContent = op?.status
-    ? `${op.message} (${Math.round(op.progress * 100)}%)`
+    ? `${op.message} (${Math.round(op.progress * 100)}%)` +
+      (stats
+        ? ` · 已恢复 ${stats.restored_cues} 条 · 耗时 ${Math.floor(stats.elapsed_seconds)} 秒 · 重试 ${stats.retries} · 拆批 ${stats.splits}${stats.checkpoint_saved ? " · 译文已保存，可继续" : ""}`
+        : "")
     : "";
   $("video-downloads").replaceChildren();
   for (const video of job.videos ||
@@ -903,6 +1031,14 @@ async function initStudio() {
   translationModels[translationProvider] = $("translation-model").value;
   if (preferences.target_language)
     $("target-language").value = preferences.target_language;
+  for (const key of translationFields)
+    if (preferences.translation_options?.[key] !== undefined)
+      $("translation-" + key.replaceAll("_", "-")).value =
+        preferences.translation_options[key] ?? "";
+  $("translation-reasoning").value =
+    preferences.translation_options?.reasoning || "auto";
+  $("translation-resume").checked =
+    preferences.translation_options?.resume ?? true;
   renderTranslationProvider();
   if (translationProvider === "lmstudio") refreshTranslationModels();
   $("project-storage").textContent = state.config.persistent
@@ -916,6 +1052,11 @@ async function initStudio() {
 }
 
 $("history-refresh").onclick = refreshHistory;
+$("delete-suspicions").onclick = () => {
+  wholeEdit(CueEditor.removeSuspicions(state.cues));
+  renderQuality();
+  updateButtons();
+};
 $("translation-provider").onchange = () => {
   translationModels[translationProvider] = $("translation-model").value;
   translationProvider = $("translation-provider").value;
@@ -930,6 +1071,7 @@ $("translation-model").oninput = () => {
   translationModels[translationProvider] = $("translation-model").value;
   updateButtons();
 };
+$("translation-reasoning").onchange = updateButtons;
 $("target-language").oninput = updateButtons;
 $("batch-select").onclick = () => $("batch-input").click();
 $("batch-input").onchange = (event) => {
@@ -1027,11 +1169,14 @@ $("waveform").onclick = (event) => {
   );
 };
 $("translate").onclick = async () => {
+  for (const input of document.querySelectorAll(".delivery-tools input"))
+    if (!input.reportValidity()) return;
   try {
     await performOperation("translate", {
       provider: $("translation-provider").value,
       target: $("target-language").value.trim(),
       model: $("translation-model").value.trim(),
+      ...translationOptions(),
     });
   } catch (error) {
     alertMessage(error.message);
@@ -1085,6 +1230,7 @@ $("save-preferences").onclick = async () => {
         translation_provider: $("translation-provider").value,
         translation_model: $("translation-model").value.trim(),
         target_language: $("target-language").value,
+        translation_options: translationOptions(),
       }),
     );
     $("preferences-status").textContent = "常用配置已保存";
