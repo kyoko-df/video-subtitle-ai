@@ -21,6 +21,10 @@ let historyTimer,
   batchStopped = false;
 let qualityTimer,
   findPosition = -1;
+let translationProvider = "openai",
+  translationRequest = 0,
+  translationLoading = false;
+const translationModels = { openai: "gpt-4o-mini", lmstudio: "" };
 
 function jsonRequest(method, body) {
   return {
@@ -114,17 +118,71 @@ function updateStudioButtons(editing) {
   $("redo").disabled = !editing || !state.redo.length;
   $("loop-cue").disabled = !editing || !state.previewUrl || !state.cues.length;
   $("translate").disabled ||=
-    !state.config?.openai_key_configured ||
-    !state.config?.openai_engine_installed;
+    !$("translation-model").value.trim() ||
+    !$("target-language").value.trim() ||
+    ($("translation-provider").value === "openai" &&
+      (!state.config?.openai_key_configured ||
+        !state.config?.openai_engine_installed));
   $("burn-video").disabled ||= !state.job?.media_available;
   $("soft-video").disabled ||= !state.job?.media_available;
   for (const input of document.querySelectorAll(
-    ".editor-tools input, .editor-tools select, .delivery-tools input",
+    ".editor-tools input, .editor-tools select, .delivery-tools input, .delivery-tools select",
   ))
     input.disabled = state.saving || state.busy;
+  $("translation-model-refresh").disabled =
+    state.saving || state.busy || translationLoading;
   $("operation-cancel").hidden = !["queued", "running"].includes(
     state.job?.operation?.status,
   );
+}
+
+function renderTranslationProvider() {
+  const local = $("translation-provider").value === "lmstudio";
+  $("translation-model-refresh").hidden = !local;
+  $("translation-model").placeholder = local
+    ? "选择或填写本地模型标识"
+    : "例如 gpt-4o-mini";
+  $("translation-note").textContent = local
+    ? "字幕文本会发给本机 LM Studio 服务。请先安装 LM Studio，下载并加载文字对话模型，在 Developer 页面启动服务；无需 OpenAI Key。"
+    : "翻译会向配置的 OpenAI 服务发送字幕文本并使用 API 额度。";
+  $("translation-model-options").replaceChildren();
+  $("translation-model-status").hidden = !local;
+  updateButtons();
+}
+
+async function refreshTranslationModels() {
+  if ($("translation-provider").value !== "lmstudio") return;
+  const request = ++translationRequest;
+  translationLoading = true;
+  const status = $("translation-model-status");
+  status.hidden = false;
+  status.textContent = "正在连接本机 LM Studio…";
+  updateButtons();
+  try {
+    const { models } = await api("/api/translation/models");
+    if (request !== translationRequest) return;
+    $("translation-model-options").replaceChildren(
+      ...models.map((id) => {
+        const option = document.createElement("option");
+        option.value = id;
+        return option;
+      }),
+    );
+    if (!$("translation-model").value.trim() && models.length === 1)
+      $("translation-model").value = models[0];
+    translationModels.lmstudio = $("translation-model").value;
+    status.textContent = models.length
+      ? `已连接，发现 ${models.length} 个模型。请选择文字对话模型；模型需支持结构化输出。`
+      : "服务已连接，但没有可用模型。请在 LM Studio 中下载文字对话模型后刷新。";
+  } catch (error) {
+    if (request !== translationRequest) return;
+    status.textContent = error.message;
+  } finally {
+    if (request === translationRequest) {
+      translationLoading = false;
+      updateButtons();
+    }
+  }
 }
 
 function localDraftKey(id = state.job?.id) {
@@ -837,10 +895,16 @@ async function refreshModels() {
 async function initStudio() {
   const preferences = await api("/api/preferences");
   if (preferences.job) applySettings(preferences.job);
-  if (preferences.translation_model)
-    $("translation-model").value = preferences.translation_model;
+  translationProvider =
+    preferences.translation_provider === "lmstudio" ? "lmstudio" : "openai";
+  $("translation-provider").value = translationProvider;
+  $("translation-model").value =
+    preferences.translation_model ?? translationModels[translationProvider];
+  translationModels[translationProvider] = $("translation-model").value;
   if (preferences.target_language)
     $("target-language").value = preferences.target_language;
+  renderTranslationProvider();
+  if (translationProvider === "lmstudio") refreshTranslationModels();
   $("project-storage").textContent = state.config.persistent
     ? "项目、源文件与草稿自动保存在本机，重启后可继续编辑。"
     : "当前是临时会话，关闭服务后会清理。";
@@ -852,6 +916,21 @@ async function initStudio() {
 }
 
 $("history-refresh").onclick = refreshHistory;
+$("translation-provider").onchange = () => {
+  translationModels[translationProvider] = $("translation-model").value;
+  translationProvider = $("translation-provider").value;
+  ++translationRequest;
+  translationLoading = false;
+  $("translation-model").value = translationModels[translationProvider];
+  renderTranslationProvider();
+  if (translationProvider === "lmstudio") refreshTranslationModels();
+};
+$("translation-model-refresh").onclick = refreshTranslationModels;
+$("translation-model").oninput = () => {
+  translationModels[translationProvider] = $("translation-model").value;
+  updateButtons();
+};
+$("target-language").oninput = updateButtons;
 $("batch-select").onclick = () => $("batch-input").click();
 $("batch-input").onchange = (event) => {
   const files = [...event.target.files];
@@ -950,8 +1029,9 @@ $("waveform").onclick = (event) => {
 $("translate").onclick = async () => {
   try {
     await performOperation("translate", {
-      target: $("target-language").value,
-      model: $("translation-model").value,
+      provider: $("translation-provider").value,
+      target: $("target-language").value.trim(),
+      model: $("translation-model").value.trim(),
     });
   } catch (error) {
     alertMessage(error.message);
@@ -1002,7 +1082,8 @@ $("save-preferences").onclick = async () => {
           media_id: "preferences",
           track: null,
         },
-        translation_model: $("translation-model").value,
+        translation_provider: $("translation-provider").value,
+        translation_model: $("translation-model").value.trim(),
         target_language: $("target-language").value,
       }),
     );

@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
-from . import __version__, model_manager
+from . import __version__, lmstudio, model_manager
 from .captions import CaptionOptions, quality_report
 from .diagnostics import doctor, redacted_traceback
 from .engines import EngineOptions
@@ -129,8 +129,9 @@ class DraftRequest(ExportSettings):
 
 
 class TranslationRequest(BaseModel):
+    provider: Literal["openai", "lmstudio"] = "openai"
     target: str = Field(min_length=1, max_length=80)
-    model: str = Field(default="gpt-4o-mini", min_length=1, max_length=100)
+    model: str = Field(default="gpt-4o-mini", min_length=1, max_length=256)
 
 
 class VideoRequest(BaseModel):
@@ -139,7 +140,8 @@ class VideoRequest(BaseModel):
 
 class PreferencesRequest(BaseModel):
     job: JobRequest | None = None
-    translation_model: str = Field(default="gpt-4o-mini", max_length=100)
+    translation_provider: Literal["openai", "lmstudio"] = "openai"
+    translation_model: str = Field(default="gpt-4o-mini", max_length=256)
     target_language: str = Field(default="en", max_length=80)
 
 
@@ -1044,6 +1046,13 @@ def create_app(
             workspace.save_job(job)
             return job.public()
 
+    @app.get("/api/translation/models")
+    def translation_models():
+        try:
+            return {"models": lmstudio.models()}
+        except SubtitleError as exc:
+            raise HTTPException(503, str(exc)) from exc
+
     @app.post("/api/jobs/{job_id}/translate", status_code=202)
     def translate_job(job_id: str, data: TranslationRequest):
         workspace = app.state.workspace
@@ -1052,7 +1061,7 @@ def create_app(
             job,
             "translate",
             lambda update, cancel: translate(
-                job.transcript, data.target, data.model, update, cancel
+                job.transcript, data.target, data.model, update, cancel, data.provider
             ),
         )
 

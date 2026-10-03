@@ -21,7 +21,13 @@ def doctor() -> dict:
 
 def redacted_traceback() -> str:
     text = traceback.format_exc()
-    for name in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "HF_TOKEN"):
+    for name in (
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "HF_TOKEN",
+        "LM_STUDIO_API_KEY",
+        "LM_STUDIO_BASE_URL",
+    ):
         value = os.environ.get(name, "").strip()
         if value:
             text = text.replace(value, "[redacted]")

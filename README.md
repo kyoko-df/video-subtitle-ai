@@ -16,7 +16,7 @@
 - GUI 支持拖放文件、批量转写、任务历史 / 重试 / ZIP 下载、项目持久化和自动草稿恢复。
 - 预览与校对支持新增 / 拆分 / 合并 / 删除 / 撤销 / 重做、查找替换、循环播放、播放速度、整体偏移、波形定位、时间轴缩放与拖动调时。
 - 自定义排版规则与质量提示，字幕样式、双语字幕、说话人标注、逐词高亮，以及烧录视频 / 可切换字幕轨导出。
-- 可选 OpenAI 文本翻译与本地 pyannote 说话人识别；模型下载、进度、管理和常用配置。
+- 可选 OpenAI / 本机 LM Studio 文本翻译与本地 pyannote 说话人识别；模型下载、进度、管理和常用配置。
 - CLI 支持转写、查看音轨、JSON 格式转换和环境检查；拒绝意外覆盖输出或输入文件。
 - GUI 仅监听本机地址；API Key 从服务器环境变量读取，前端不会收到 Key。
 
@@ -110,7 +110,17 @@ GUI 模型只允许 `tiny`、`base`、`small`、`medium`、`large-v3` 和 `turbo
 
 ### 翻译和自动说话人识别
 
-翻译使用服务器已有 `OPENAI_API_KEY` / `OPENAI_BASE_URL`，通过 Responses API 的严格 JSON Schema 输出，按字幕编号核对结果，不修改原文或时间。默认文本模型为 `gpt-4o-mini`，可在界面更改。兼容服务需支持 **Responses / Structured Outputs**；转写兼容接口本身不代表支持翻译。字幕文本会发送到服务并使用 API 额度，分批全部成功才更新字幕；失败或取消保留原字幕。也可直接手动填写 / 修改译文。
+翻译支持 **OpenAI API** 和 **LM Studio 本地**，在工作台的“翻译方式”中选择。两种方式都按字幕编号核对结果，不修改原文、时间、词时间或说话人；全部批次成功才更新译文，失败或取消保留原字幕及已有译文。也可直接手动填写 / 修改译文。
+
+OpenAI 方式使用服务器已有 `OPENAI_API_KEY` / `OPENAI_BASE_URL`，通过 Responses API 的严格 JSON Schema 输出。默认文本模型为 `gpt-4o-mini`，可在界面更改。兼容服务需支持 **Responses / Structured Outputs**；转写兼容接口本身不代表支持翻译。字幕文本会发送到配置的服务并使用 API 额度。
+
+LM Studio 方式先完成以下准备：
+
+1. 从 [LM Studio 官网](https://lmstudio.ai/download) 安装应用，在其中下载并加载支持目标语言及结构化输出的**文字对话模型**。语音识别的 Whisper 模型不能用于这里的文本翻译。
+2. 在 LM Studio 的 **Developer** 页面开启 **Start server**，默认端口为 `1234`，建议模型上下文至少 `8192`。模型是否支持结构化输出及实际翻译质量取决于所选模型，见 [LM Studio 结构化输出文档](https://lmstudio.ai/docs/developer/openai-compat/structured-output)。
+3. 在工作台选择“LM Studio 本地”，点击“刷新本地模型”，选择或填写模型标识，设置目标语言，再点击“翻译字幕”。多个模型时需自行选择文字对话模型。保存常用配置可记住翻译方式、模型和语言。
+
+本地方式通过 `/v1/chat/completions` 将字幕文本发给本机 LM Studio 服务，使用其 JSON Schema 输出；无需 `[openai]` 依赖或 OpenAI Key。请在 LM Studio 加载本机模型以进行本地推理。应用不代为安装 LM Studio 或下载其模型；工作台原有模型管理器仍用于语音识别模型。默认地址是 `http://127.0.0.1:1234/v1`，可在启动工作台前设置 `LM_STUDIO_BASE_URL` 更换本机端口（仅接受 `localhost`、`127.0.0.1` 或 `::1` 的 HTTP 地址）。LM Studio 开启认证时再设置 `LM_STUDIO_API_KEY`，Key 不会返回给浏览器。模型列表超时为 8 秒，翻译每次请求超时为 180 秒；每批最多 8 条 / 约 2000 个输入字符，单条长字幕不会拆分。取消需等待当前请求返回，后续批次停止。
 
 自动区分说话人是额外依赖，建议独立 Python 3.11 / 3.12 环境：
 
@@ -375,7 +385,9 @@ Short speech is not artificially extended to one second. Missing / invalid word 
 
 JSON uses schema version 1 and timestamps in seconds; it can be edited and re-exported without the original media or another AI request. SRT / VTT use milliseconds, ASS uses centiseconds, and TXT has no timestamps. SRT retains raw text such as `AT&T`; VTT escapes markup; ASS style-control characters are neutralized.
 
-GUI includes batch jobs, project history, ZIP downloads, draft recovery, find/replace, redo, loop playback, waveform timing, custom layout/quality checks, subtitle styles, bilingual editing, video burn-in and MP4 subtitle tracks. Optional translation uses OpenAI Responses / Structured Outputs; optional diarization uses pyannote Community-1 (install `[diarization]`, configure `HF_TOKEN` after accepting model conditions). JSON v2 stores word timing, speaker and translation and reads v1. Word highlighting supports original captions; estimated timing is marked. ASR overlaps are normalized, while manual overlaps can be enabled explicitly; diarization does not separate overlapping voices. Music, accents, noisy recordings, and overlapping speech require proofreading. Delayed audio offsets are restored; damaged or discontinuous media timestamps may need conversion first.
+GUI includes batch jobs, project history, ZIP downloads, draft recovery, find/replace, redo, loop playback, waveform timing, custom layout/quality checks, subtitle styles, bilingual editing, video burn-in and MP4 subtitle tracks. Optional translation uses OpenAI Responses / Structured Outputs or a local LM Studio server; optional diarization uses pyannote Community-1 (install `[diarization]`, configure `HF_TOKEN` after accepting model conditions). JSON v2 stores word timing, speaker and translation and reads v1. Word highlighting supports original captions; estimated timing is marked. ASR overlaps are normalized, while manual overlaps can be enabled explicitly; diarization does not separate overlapping voices. Music, accents, noisy recordings, and overlapping speech require proofreading. Delayed audio offsets are restored; damaged or discontinuous media timestamps may need conversion first.
+
+For local translation, [install LM Studio](https://lmstudio.ai/download), download/load a text chat model that supports your languages and [structured output](https://lmstudio.ai/docs/developer/openai-compat/structured-output), and start the server in its **Developer** tab. A context size of at least `8192` is recommended. In the workbench, select **LM Studio 本地**, refresh the model list, choose or enter a text model identifier, then translate. Save common settings to remember the provider, model and target language. This sends subtitle text to the loopback `/v1/chat/completions` endpoint, requires neither an OpenAI key nor the `[openai]` extra, and preserves original text, timing, words and speakers. Load a model on this computer in LM Studio for local inference. Shengmu does not install LM Studio or download its models; its existing model manager covers ASR models. `LM_STUDIO_BASE_URL` defaults to `http://127.0.0.1:1234/v1` and accepts only HTTP loopback hosts (`localhost`, `127.0.0.1`, `::1`); set `LM_STUDIO_API_KEY` only when LM Studio authentication is enabled. Model discovery times out after 8 seconds, translation after 180 seconds per request. Local batches contain up to 8 cues / roughly 2000 characters without splitting individual cues. All batches must succeed before translations are applied; failure/cancellation preserves existing translations. Cancellation waits for the current request to return. Model support, quality and memory requirements vary.
 
 Cancellation is cooperative: FFmpeg can stop immediately, while model loading / inference or an in-flight API request must return first. Already-sent requests may be billed. This is a single-user local tool, not a public multi-user service; CLI outputs and GUI projects both persist. The model manager can download/resume/remove managed models and show existing shared cache availability; common settings can be saved.
 
@@ -507,7 +519,9 @@ PowerShell では `$env:OPENAI_API_KEY="自分の API キー"` を使います�
 
 JSON はスキーマバージョン 1、時間単位は秒です。元動画や AI の再実行なしで編集 / 再出力できます。SRT / VTT はミリ秒、ASS は 1/100 秒の精度、TXT は時間情報なしです。SRT は `AT&T` などの元テキストを保持し、VTT はマークアップをエスケープ、ASS はスタイル制御文字を無害化します。
 
-バッチ処理、履歴、ZIP、自動下書き、検索置換、やり直し、ループ再生、波形・ドラッグ調整、レイアウト・品質確認、字幕スタイル、二言語字幕、焼き込み / MP4 字幕トラックを利用できます。翻訳は OpenAI Responses / Structured Outputs、任意の自動話者識別は pyannote Community-1（`[diarization]` とモデル利用条件への同意、`HF_TOKEN` が必要）を使用します。JSON v2 は単語時刻・話者・訳文を保持し、v1 も読み込めます。単語ハイライトは原文に対応し、推定時刻を明示します。手動編集の重複は設定で許可できます。自動話者識別は同時発話の音源分離ではありません。音楽、訛り、雑音、同時発話では特に校正が必要です。音声開始オフセットは動画タイムラインに復元しますが、破損 / 不連続なタイムスタンプのメディアは事前変換を推奨します。
+バッチ処理、履歴、ZIP、自動下書き、検索置換、やり直し、ループ再生、波形・ドラッグ調整、レイアウト・品質確認、字幕スタイル、二言語字幕、焼き込み / MP4 字幕トラックを利用できます。翻訳は OpenAI Responses / Structured Outputs または本機の LM Studio、任意の自動話者識別は pyannote Community-1（`[diarization]` とモデル利用条件への同意、`HF_TOKEN` が必要）を使用します。JSON v2 は単語時刻・話者・訳文を保持し、v1 も読み込めます。単語ハイライトは原文に対応し、推定時刻を明示します。手動編集の重複は設定で許可できます。自動話者識別は同時発話の音源分離ではありません。音楽、訛り、雑音、同時発話では特に校正が必要です。音声開始オフセットは動画タイムラインに復元しますが、破損 / 不連続なタイムスタンプのメディアは事前変換を推奨します。
+
+ローカル翻訳には [LM Studio](https://lmstudio.ai/download) をインストールし、対象言語と [構造化出力](https://lmstudio.ai/docs/developer/openai-compat/structured-output) に対応するテキスト対話モデルをダウンロード・読み込み、**Developer → Start server** を有効にします。コンテキストは `8192` 以上を推奨します。作業画面で **LM Studio 本地** を選び、モデル一覧を更新して識別子を選択 / 入力し、翻訳します。よく使う設定を保存すると方式・モデル・対象言語を復元できます。字幕テキストは本機の `/v1/chat/completions` に送信され、OpenAI Key と `[openai]` は不要です。原文・時刻・単語時刻・話者を保持し、全バッチ成功後のみ訳文を反映します。失敗 / キャンセル時は既存の訳文を保持します。本機で推論するには LM Studio に本機のモデルを読み込んでください。本アプリは LM Studio のインストールやモデル取得を行いません。既存のモデル管理は音声認識用です。`LM_STUDIO_BASE_URL` の既定値は `http://127.0.0.1:1234/v1` で、HTTP のループバックホストのみ許可します。認証を有効にした場合のみ `LM_STUDIO_API_KEY` を設定します。一覧取得は 8 秒、翻訳は各リクエスト 180 秒でタイムアウトします。1 バッチは最大 8 字幕 / 約 2000 文字で、単独の字幕は分割しません。キャンセルは実行中のリクエストが戻るまで待ちます。対応機能・翻訳品質・必要メモリはモデルに依存します。
 
 キャンセルは協調的です。FFmpeg は停止できますが、モデル読み込み / 推論や送信済み API リクエストは処理が戻るまで待つ必要があります。送信済みリクエストは課金される場合があります。本ツールはローカルの単一ユーザー向けで、公開マルチユーザーサービスではありません。CLI の出力は保存され、GUI のプロジェクトと下書きも保存されます。モデル管理ではダウンロード、再開、管理対象モデルの削除と共有キャッシュの確認が可能です。
 

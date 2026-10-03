@@ -477,6 +477,12 @@
         <section class="delivery-tools" aria-label="翻译与视频导出">
           <div class="toolbar">
             <label
+              >翻译方式<select id="translation-provider">
+                <option value="openai">OpenAI API</option>
+                <option value="lmstudio">LM Studio 本地</option>
+              </select></label
+            >
+            <label
               >目标语言<input
                 id="target-language"
                 value="en"
@@ -486,7 +492,16 @@
               >翻译模型<input
                 id="translation-model"
                 value="gpt-4o-mini"
-                maxlength="100" /></label
+                list="translation-model-options"
+                maxlength="256" /></label
+            ><datalist id="translation-model-options"></datalist
+            ><button
+              id="translation-model-refresh"
+              class="secondary"
+              type="button"
+              hidden
+            >
+              刷新本地模型</button
             ><button id="translate" class="secondary" type="button" disabled>
               翻译字幕</button
             ><button id="burn-video" class="secondary" type="button" disabled>
@@ -503,9 +518,18 @@
             </button>
           </div>
           <p class="muted">
-            翻译会向配置的 OpenAI 服务发送字幕文本并使用 API
-            额度。视频导出使用已保存的字幕和样式。
+            <span id="translation-note"
+              >翻译会向配置的 OpenAI 服务发送字幕文本并使用 API 额度。</span
+            >
+            视频导出使用已保存的字幕和样式。
           </p>
+          <p
+            id="translation-model-status"
+            class="muted"
+            role="status"
+            aria-live="polite"
+            hidden
+          ></p>
           <p id="operation-status" role="status" aria-live="polite"></p>
           <div id="video-downloads" class="toolbar"></div>
         </section>
