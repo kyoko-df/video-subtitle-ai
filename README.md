@@ -1,34 +1,32 @@
-<a id="chinese"></a>
+# Shengmu — AI subtitles for video and audio
 
-# 声幕 Shengmu · AI 视频字幕
+**English** · [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
 
-[简体中文](#chinese) · [English](#english) · [日本語](#日本語)
+A Python project that can be developed and run directly: FFmpeg extracts the selected audio track, and **local faster-whisper** or the **OpenAI API** generates timestamped subtitles. It provides a local browser GUI and a CLI that share the same processing pipeline.
 
-一个可以直接开发和运行的 Python 项目：使用 FFmpeg 提取指定音轨，以 **本地 faster-whisper** 或 **OpenAI API** 生成带时间轴的字幕；提供本地浏览器 GUI 与 CLI，二者共用处理流程。
+## Implemented
 
-## 已实现
+- Reads duration, audio track numbers, languages, channel counts, and start offsets via ffprobe; extracts 16 kHz mono PCM audio via FFmpeg.
+- Local Whisper model transcription with automatic language detection, CPU / NVIDIA CUDA, word-level timestamps, recognition prompts, and silence filtering; reuses the most recently used model.
+- Re-segments captions from word-level timestamps, preferring punctuation breaks; Chinese / Japanese lines are capped at 20 characters, other languages at 42, with at most 2 lines and 7 seconds per cue.
+- OpenAI `whisper-1` transcription requesting word-level and segment timestamps; long audio is chunked at up to 600 seconds, preferring silence within 5 seconds before the boundary, and the next chunk carries the previous text as a prompt.
+- Exports **SRT, WebVTT, ASS, TXT, JSON**; TXT is plain text, the rest keep timing.
+- The GUI supports drag-and-drop files, batch transcription, job history / retry / ZIP download, project persistence, and automatic draft recovery.
+- Preview and proofreading support add / split / merge / delete / undo / redo, find & replace, loop playback, playback speed, global shift, waveform seeking, timeline zoom, and drag-to-adjust timing.
+- Custom layout rules and quality hints, subtitle styles, bilingual subtitles, speaker labels, word-level highlighting, plus burn-in video / switchable subtitle-track export.
+- Optional OpenAI / local LM Studio text translation and local pyannote speaker diarization; model download, progress, management, and saved common settings.
+- The CLI supports transcribe, translate, one-step bilingual export, audio-track inspection, JSON format conversion, and environment checks; it refuses to accidentally overwrite outputs or input files.
+- Long-video translation supports per-batch checkpoints, resume, bounded retries, recursive batch splitting, and concurrency 1 / 2; the workbench exposes timeout, output limit, and model-supported reasoning modes.
+- ASR provides less-repetition / soft-speech profiles and advanced thresholds; suspected repetition loops are flagged first, with audition, batch delete, and undo.
+- The GUI binds to loopback addresses only; API keys are read from server environment variables and never reach the frontend.
 
-- 通过 ffprobe 读取时长、音轨编号、语言、声道和起始偏移；通过 FFmpeg 提取 16 kHz 单声道 PCM 音频。
-- 本地 Whisper 模型转写，支持自动识别语言、CPU / NVIDIA CUDA、词级时间戳、识别提示及静音过滤；复用最近使用的一个模型。
-- 按词级时间戳重新切分字幕，优先在标点处断开；中文 / 日文每行最多 20 字符，其他语言每行最多 42 字符，每条最多 2 行、7 秒。
-- OpenAI `whisper-1` 转写，请求词级和片段时间戳；长音频按最多 600 秒分块，优先在边界前 5 秒内的静音处切分，下一块携带前文提示。
-- 导出 **SRT、WebVTT、ASS、TXT、JSON**；TXT 为纯文本，其余保留时间信息。
-- GUI 支持拖放文件、批量转写、任务历史 / 重试 / ZIP 下载、项目持久化和自动草稿恢复。
-- 预览与校对支持新增 / 拆分 / 合并 / 删除 / 撤销 / 重做、查找替换、循环播放、播放速度、整体偏移、波形定位、时间轴缩放与拖动调时。
-- 自定义排版规则与质量提示，字幕样式、双语字幕、说话人标注、逐词高亮，以及烧录视频 / 可切换字幕轨导出。
-- 可选 OpenAI / 本机 LM Studio 文本翻译与本地 pyannote 说话人识别；模型下载、进度、管理和常用配置。
-- CLI 支持转写、翻译、一步双语导出、查看音轨、JSON 格式转换和环境检查；拒绝意外覆盖输出或输入文件。
-- 长视频翻译支持逐批检查点、恢复、有限重试、递归拆批和并发 1 / 2；工作台可配置超时、输出上限与模型支持的思考模式。
-- ASR 提供减少重复 / 轻声方案与高级阈值；疑似重复循环先标记，支持试听、批量删除和撤销。
-- GUI 仅监听本机地址；API Key 从服务器环境变量读取，前端不会收到 Key。
+## Installation
 
-## 安装
+**Python 3.11 or 3.12** is recommended. The project declares Python 3.10+, but local-model dependencies need platform packages for newer Pythons. Windows, macOS, and Linux all use the same source tree.
 
-建议使用 **Python 3.11 或 3.12**。项目声明 Python 3.10+，较新 Python 的本地模型依赖需有对应平台的安装包。Windows、macOS、Linux 均使用同一份源码。
+The local engine pins a compatible PyAV range to avoid transcription failures caused by newer versions removing the `metadata_errors` parameter; install with the dependencies the project declares.
 
-本地引擎约束了 PyAV 兼容版本，避免新版本移除 `metadata_errors` 参数导致转写失败；请使用项目声明的依赖安装。
-
-先安装 FFmpeg，确保 `ffmpeg` 和 `ffprobe` 都可在终端中运行：
+Install FFmpeg first and make sure both `ffmpeg` and `ffprobe` run in a terminal:
 
 ```bash
 # macOS
@@ -38,11 +36,11 @@ brew install ffmpeg
 sudo apt-get update
 sudo apt-get install ffmpeg
 
-# Windows PowerShell（安装后重新打开终端）
+# Windows PowerShell (reopen the terminal after installing)
 winget install Gyan.FFmpeg
 ```
 
-在本项目目录安装 Python 依赖：
+Install the Python dependencies in the project directory:
 
 ```bash
 python3.12 -m venv .venv
@@ -51,7 +49,7 @@ python -m pip install -e ".[all]"
 shengmu doctor
 ```
 
-Windows 对应命令：
+The Windows equivalent:
 
 ```powershell
 py -3.12 -m venv .venv
@@ -60,9 +58,9 @@ python -m pip install -e ".[all]"
 shengmu doctor
 ```
 
-只使用一种引擎时，将 `[all]` 改成 `[local]` 或 `[openai]`。基础依赖仅为 GUI 服务依赖；AI 依赖按选项安装。
+If you only use one engine, replace `[all]` with `[local]` or `[openai]`. The base dependencies only cover the GUI service; AI dependencies install per option.
 
-如果 FFmpeg 不在 PATH，可设置 `FFMPEG_BINARY`、`FFPROBE_BINARY` 为可执行文件的绝对路径。`.env.example` 仅是配置示例，项目**不会自动加载** `.env`。
+If FFmpeg is not on PATH, set `FFMPEG_BINARY` and `FFPROBE_BINARY` to absolute executable paths. `.env.example` is only a configuration example; the project **does not auto-load** `.env`.
 
 ## GUI
 
@@ -70,190 +68,190 @@ shengmu doctor
 shengmu gui
 ```
 
-自动打开 <http://127.0.0.1:8765>。选择视频 → 选择音轨和转写引擎 → 勾选格式 → 生成字幕 → 校对 → 保存并导出 → 下载文件。
+Opens <http://127.0.0.1:8765> automatically. Select a video → choose an audio track and transcription engine → check formats → generate subtitles → proofread → save and export → download files. The GUI labels are in Chinese; button names below are quoted as they appear.
 
-可先选择 `examples/local-demo.mp4`，用 Tiny 模型和英语验证完整流程；该文件是用于测试的合成语音视频，同目录有实际本地识别生成的 SRT。
+You can pick `examples/local-demo.mp4` first and verify the full flow with the Tiny model and English; it is a synthetic-speech video for testing, and the same directory contains an SRT actually generated by local recognition.
 
-按上文安装到项目的 `.venv` 后，也可在 macOS 双击 `start-gui.command`、Windows 双击 `start-gui.bat` 启动。启动脚本默认将模型缓存放在项目的 `models` 目录；已有 `SHENGMU_MODEL_DIR` 配置时保留该配置。
+After installing into the project's `.venv` as above, you can also double-click `start-gui.command` on macOS or `start-gui.bat` on Windows. The launch scripts put the model cache in the project's `models` directory by default; an existing `SHENGMU_MODEL_DIR` setting is kept.
 
 ```bash
 shengmu gui --port 9000 --no-browser
 ```
 
-GUI 是运行在本机的浏览器应用，普通上传保存到本机项目目录；也可直接读取已连接的 SMB / 本地视频。本地模式不会上传音频到 AI 服务。单个上传文件上限为 2 GB，更大的视频可直接填写路径或使用 CLI。模型首次下载需要网络，下载后可离线使用。浏览器不支持某个视频编码时仍能转写，但无法在 GUI 中播放该视频。
+The GUI is a browser app running on your machine. Normal uploads are saved to the local project directory; it can also directly read connected SMB / local videos. Local mode never uploads audio to an AI service. A single uploaded file is limited to 2 GB; for larger videos, enter a path directly or use the CLI. Model downloads need network the first time and work offline afterwards. If the browser does not support a video codec, transcription still works but the video cannot be played in the GUI.
 
-GUI 默认把项目、上传源文件、字幕和草稿保存在当前目录的 `.shengmu/workspace`，停止和重启服务后仍可从任务列表继续校对。用 `shengmu gui --workspace /path/to/projects` 或 `SHENGMU_WORKSPACE` 更改目录；同一项目目录只允许一个服务进程。处理中断的任务会标记为失败，可在任务列表重试。
+By default the GUI stores projects, uploaded source files, subtitles, and drafts in `.shengmu/workspace` under the current directory, so you can resume proofreading from the job list after stopping and restarting the service. Use `shengmu gui --workspace /path/to/projects` or `SHENGMU_WORKSPACE` to change the directory; only one service process is allowed per project directory. Jobs interrupted during processing are marked failed and can be retried from the job list.
 
-最多保留 30 个源文件、100 个任务；上传源文件合计最多 4 GB，包含正在上传的文件。最多 5 个转写任务处理中或排队，处理串行运行。更换文件会保留旧项目；在“源文件缓存”中释放不用的源文件，或删除旧任务腾出任务名额。持久项目不会自动过期。释放源文件后保留已完成字幕，但无法播放、重试或导出视频；字幕、视频、模型和波形缓存另占磁盘空间。
+At most 30 source files and 100 jobs are kept; uploaded sources total at most 4 GB, including in-flight uploads. Up to 5 transcription jobs can be processing or queued, and processing runs serially. Replacing a file keeps the old project; release unused sources under “源文件缓存” (source file cache), or delete old jobs to free job slots. Persistent projects never expire automatically. Releasing a source keeps its finished subtitles, but they can no longer play, retry, or export video; subtitles, videos, models, and waveform caches take additional disk space.
 
-### SMB / NAS 视频
+### SMB / NAS videos
 
-在“源文件 → 直接读取本地 / SMB 视频”中填写完整视频路径，点击“直接读取视频”。程序只保存路径引用，预览、音轨提取和视频导出直接读取源文件；字幕、草稿、波形缓存和导出视频保存到本机项目目录。源视频不复制到上传缓存，因此不受 2 GB 单文件 / 4 GB 上传空间限制，仍计入 30 个源文件名额；临时提取音频和导出视频需要本机可用空间。
+Enter the full video path under “源文件 → 直接读取本地 / SMB 视频” (Source files → read local / SMB video directly) and click “直接读取视频” (read video directly). The program stores only the path reference; preview, audio-track extraction, and video export read the source file directly, while subtitles, drafts, waveform caches, and exported videos are saved to the local project directory. Source videos are not copied into the upload cache, so they are exempt from the 2 GB per-file / 4 GB upload limits but still count toward the 30-source quota; temporary audio extraction and exported video still need local free space.
 
-- **macOS**：先在 Finder 按 ⌘K，连接 `smb://服务器/共享名` 并登录，再填写挂载后的文件路径，例如 `/Volumes/共享名/视频.mp4`。可在 Finder 选中文件，按 ⌥⌘C 复制路径。连接方式见 [Apple 官方说明](https://support.apple.com/en-sg/guide/mac-help/mchlp1140/mac)。
-- **Windows**：先在文件资源管理器中连接并登录共享，再填写 `\\服务器\共享名\视频.mp4`，或映射盘路径 `Z:\视频.mp4`。使用启动本工具的同一系统账号连接共享，避免映射盘在其他账号 / 提权进程中不可见。路径格式见 [Microsoft 官方说明](https://learn.microsoft.com/dotnet/standard/io/file-path-formats)。
-- **Linux**：先用系统挂载 SMB 共享，再填写挂载点下的完整文件路径。
+- **macOS**: in Finder press ⌘K, connect to `smb://server/share` and sign in, then enter the mounted file path, e.g. `/Volumes/share/video.mp4`. You can select a file in Finder and press ⌥⌘C to copy its path. See [Apple's instructions](https://support.apple.com/en-sg/guide/mac-help/mchlp1140/mac) for connecting.
+- **Windows**: connect and sign in to the share in File Explorer first, then enter `\\server\share\video.mp4`, or a mapped-drive path like `Z:\video.mp4`. Connect the share with the same system account that launches this tool, so the mapped drive is not invisible to other accounts / elevated processes. See [Microsoft's path format documentation](https://learn.microsoft.com/dotnet/standard/io/file-path-formats).
+- **Linux**: mount the SMB share with the system first, then enter the full file path under the mount point.
 
-账号密码由系统管理，工具不接收或保存 SMB 凭据，也不直接连接 `smb://` 地址。共享断开时仍可校对和下载已生成字幕；重新连接同一路径后恢复读取。源文件大小或修改时间改变时，旧引用停止读取，请再次添加视频以刷新音轨 / 时长。点击“移除视频引用”只删除本机引用和波形缓存，不删除共享盘或本地原视频。源文件列表可重新打开已有引用。
+Credentials are managed by the OS; the tool neither accepts nor stores SMB credentials and never connects to `smb://` addresses itself. When a share disconnects you can still proofread and download finished subtitles; reconnecting the same path resumes reading. If a source's size or modification time changes, the old reference stops reading—add the video again to refresh tracks / duration. “移除视频引用” (remove video reference) deletes only the local reference and waveform cache, never the shared or local original. The source list can reopen existing references.
 
-字幕编辑：点击“新增”在播放位置之后的空白区间插入字幕；将文字光标放在字幕中间后点击“拆”，优先使用字幕内的当前播放时间，否则按文字比例分配时间；“并”合并下一条。撤销保留最近 100 次操作，支持在文本输入框外按 Ctrl / Cmd + Z。修改时间或文本只更新相关行与时间轴块；播放定位使用缓存及二分查找。
+Subtitle editing: “新增” (add) inserts a cue into free time at or after the playback position; place the text cursor inside a cue and click “拆” (split)—the current playback time inside the cue is preferred, otherwise time is allocated by text ratio; “并” (merge) merges with the next cue. Undo keeps the last 100 operations, and Ctrl / Cmd + Z works outside text fields. Changing time or text updates only the affected rows and timeline blocks; playback positioning uses a cache and binary search.
 
-GUI 模型只允许 `tiny`、`base`、`small`、`medium`、`large-v3` 和 `turbo`；自定义模型目录或仓库请使用 CLI。
+The GUI only allows the `tiny`, `base`, `small`, `medium`, `large-v3`, and `turbo` models; use the CLI for custom model directories or repositories.
 
-### 工作台新功能
+### Workbench features
 
-- **自动草稿**：编辑后约 0.7 秒保存草稿，同时保留浏览器本地备份以应对断连。刷新或重启后恢复草稿；“保存并导出”才更新可下载字幕。多页面编辑通过版本号防止旧页面覆盖新版本，冲突时重新打开项目。撤销 / 重做历史仅保留在当前页面。
-- **批量与历史**：“批量添加并转写”使用当前配置及各文件第一条音轨。队列满时等待空位；“停止添加”停止后续上传，已排队任务继续。任务列表可重新打开、取消、重试和删除。ZIP 包含已完成任务最近保存的字幕，各任务使用独立子目录。
-- **校对**：文字查找替换使用精确匹配；整体时间偏移同时移动词时间，越界会拒绝。循环当前句、0.5–2× 播放、左右箭头切换字幕和空格播放均可用。波形基于所选音轨并恢复轨道偏移；拖字幕块移动整条、拖两端改变边界。文字修改、拆分及边界调整会清除不再有效的词对齐；文字修改会清除对应旧译文。
-- **排版与质检**：设置 CJK / 其他语言每行长度、最多行数、最短 / 最长秒数和每秒字数。质检对原文和译文提示过长、过短、阅读过快及重叠，点击提示定位。重新排版沿用词时间切分；重新切开的字幕会清除译文，需要重新翻译。
-- **样式与视频**：字体、字号、颜色、位置和边距用于预览、ASS 和烧录。导出内容可选原文 / 译文 / 双语，可显示说话人名称。烧录视频编码为 H.264 / AAC；封装字幕轨复制原视频编码、转换音频为 AAC，字幕为 MP4 mov_text。源视频编码若无法封装到 MP4，会给出 FFmpeg 错误，可改用烧录。两种方式保留原媒体全部音轨，长视频导出可取消。
-- **逐词高亮**：保存真实词时间戳；缺失对齐时使用带 `estimated=true` 标记的估算时间。原文预览与 ASS / 烧录支持逐词高亮；译文不伪造词级对齐。手动改文后高亮会退回整句，重新识别可恢复。
-- **模型**：展示模型是否可用、磁盘大小及下载进度。下载固定官方 / 已知 CTranslate2 仓库的指定版本，并可续传。管理器可删除其下载的模型；已有共享 Hugging Face 缓存只显示为可用，避免删除其他程序共享的模型。使用中的本地模型禁止删除。保存常用配置后下次启动自动加载。
+- **Automatic drafts**: drafts save about 0.7 seconds after edits, with a browser-local backup kept for disconnections. Drafts restore after refresh or restart; only “保存并导出” (save and export) updates the downloadable subtitles. Multi-page editing uses version numbers so a stale page cannot overwrite a newer one—reopen the project on conflict. Undo / redo history lives only in the current page.
+- **Batch and history**: “批量添加并转写” (batch add and transcribe) uses the current configuration and each file's first audio track. When the queue is full, adding waits for a slot; “停止添加” (stop adding) stops further uploads while queued jobs continue. The job list can reopen, cancel, retry, and delete jobs. ZIP downloads contain each finished job's most recently saved subtitles, in separate subdirectories per job.
+- **Proofreading**: text find & replace uses exact matching; global time shifting moves word timings too, and out-of-range shifts are rejected. Looping the current cue, 0.5–2× playback, arrow-key cue switching, and spacebar playback all work. The waveform is based on the selected track and restores its offset; drag a caption block to move the whole cue, drag its ends to change boundaries. Text edits, splits, and boundary adjustments clear word alignment that is no longer valid; text edits also clear the corresponding old translation.
+- **Layout and quality checks**: configure per-line length for CJK / other languages, max lines, min / max seconds, and characters per second. Quality checks flag too-long, too-short, too-fast, and overlapping cues in source and translation; click a hint to locate the cue. Re-layout keeps word-time splitting; re-split cues lose their translations and need re-translation.
+- **Styles and video**: font, size, color, position, and margins apply to preview, ASS, and burn-in. Export content can be source / translation / bilingual, optionally showing speaker names. Burn-in encodes H.264 / AAC; muxing a subtitle track copies the original video codec, converts audio to AAC, and stores subtitles as MP4 mov_text. If the source video codec cannot go into MP4, FFmpeg reports an error—use burn-in instead. Both keep all original media audio tracks, and long-video export can be cancelled.
+- **Word highlighting**: real word timestamps are saved; missing alignment falls back to estimated times marked `estimated=true`. Source preview and ASS / burn-in support per-word highlighting; translations never fabricate word alignment. After manual text edits, highlighting falls back to the whole cue and recovers after re-recognition.
+- **Models**: shows whether each model is available, its disk size, and download progress. Downloads fetch pinned revisions from official / known CTranslate2 repositories and can resume. The manager can delete models it downloaded; existing shared Hugging Face caches only show as available, so models shared with other programs are not deleted. In-use local models cannot be deleted. Saving a common configuration loads it automatically on next start.
 
-### 翻译和自动说话人识别
+### Translation and automatic speaker recognition
 
-翻译支持 **OpenAI API** 和 **LM Studio 本地**，在工作台的“翻译方式”中选择。两种方式都按字幕编号核对结果，不修改原文、时间、词时间或说话人；全部批次成功才更新译文，失败或取消保留原字幕及已有译文。也可直接手动填写 / 修改译文。
+Translation supports **OpenAI API** and **local LM Studio**, chosen under “翻译方式” (translation method) in the workbench. Both verify results against cue numbers and never modify source text, timing, word timing, or speakers; translations update only when every batch succeeds, while failure or cancellation keeps the original subtitles and existing translations. You can also type / edit translations manually.
 
-OpenAI 方式使用服务器已有 `OPENAI_API_KEY` / `OPENAI_BASE_URL`，通过 Responses API 的严格 JSON Schema 输出。默认文本模型为 `gpt-4o-mini`，可在界面更改。兼容服务需支持 **Responses / Structured Outputs**；转写兼容接口本身不代表支持翻译。字幕文本会发送到配置的服务并使用 API 额度。
+The OpenAI method uses the server's existing `OPENAI_API_KEY` / `OPENAI_BASE_URL` and produces strict JSON Schema output via the Responses API. The default text model is `gpt-4o-mini` and can be changed in the UI. A compatible service must support **Responses / Structured Outputs**; a transcription-compatible endpoint alone does not imply translation support. Subtitle text is sent to the configured service and consumes API quota.
 
-LM Studio 方式先完成以下准备：
+For the LM Studio method, prepare the following first:
 
-1. 从 [LM Studio 官网](https://lmstudio.ai/download) 安装应用，在其中下载并加载支持目标语言及结构化输出的**文字对话模型**。语音识别的 Whisper 模型不能用于这里的文本翻译。
-2. 在 LM Studio 的 **Developer** 页面开启 **Start server**，默认端口为 `1234`，建议模型上下文至少 `8192`。模型是否支持结构化输出及实际翻译质量取决于所选模型，见 [LM Studio 结构化输出文档](https://lmstudio.ai/docs/developer/openai-compat/structured-output)。
-3. 在工作台选择“LM Studio 本地”，点击“刷新本地模型”，选择或填写模型标识，设置目标语言，再点击“翻译字幕”。已知嵌入模型不会显示；可查看加载状态和服务能力。保存常用配置可记住翻译方式、模型、语言和翻译设置。
+1. Install the app from the [LM Studio website](https://lmstudio.ai/download), then download and load a **text chat model** that supports the target language and structured output. Whisper speech-recognition models cannot do text translation here.
+2. Enable **Start server** on LM Studio's **Developer** page; the default port is `1234`, and a model context of at least `8192` is recommended. Whether structured output works and the actual translation quality depend on the chosen model—see the [LM Studio structured output docs](https://lmstudio.ai/docs/developer/openai-compat/structured-output).
+3. In the workbench select “LM Studio 本地” (LM Studio local), click “刷新本地模型” (refresh local models), choose or type a model identifier, set the target language, then click “翻译字幕” (translate subtitles). Known embedding models are hidden; loaded state and service capabilities are shown. Saving a common configuration remembers the method, model, language, and translation settings.
 
-本地方式无需 `[openai]` 依赖或 OpenAI Key。默认地址是 `http://127.0.0.1:1234/v1`，`LM_STUDIO_BASE_URL` 仅接受本机 HTTP 的 `localhost`、`127.0.0.1` 或 `::1`；认证时设置 `LM_STUDIO_API_KEY`，Key 不返回浏览器。应用不代为安装 LM Studio 或下载文字模型；原有模型管理器用于语音识别模型。
+The local method needs neither the `[openai]` extra nor an OpenAI key. The default address is `http://127.0.0.1:1234/v1`; `LM_STUDIO_BASE_URL` only accepts loopback HTTP hosts `localhost`, `127.0.0.1`, or `::1`. Set `LM_STUDIO_API_KEY` for authentication—the key is never returned to the browser. The app does not install LM Studio or download text models for you; the existing model manager is for speech-recognition models.
 
-模型列表优先使用原生 v1，旧版接口回退到 v0 / 兼容接口。思考采用“模型默认”时使用 `/v1/chat/completions` 的严格 JSON Schema；显式控制思考时使用模型声明支持的原生 `/api/v1/chat`，通过提示词要求 JSON，再严格核对字幕编号。原生接口未声明 JSON Schema 参数，因此这种模式依靠程序校验，格式失败会拆批。参见 [模型能力](https://lmstudio.ai/docs/developer/rest/list) 和 [原生思考设置](https://lmstudio.ai/docs/developer/rest/chat)。
+Model listing prefers the native v1 API and falls back to v0 / compatible endpoints on older versions. With “model default” reasoning, `/v1/chat/completions` strict JSON Schema is used; with explicit reasoning control, the native `/api/v1/chat` that the model declares support for is used, requesting JSON via prompting and strictly verifying cue numbers. The native API does not declare a JSON Schema parameter, so this mode relies on application-side validation and splits the batch on format failure. See [model capabilities](https://lmstudio.ai/docs/developer/rest/list) and [native reasoning settings](https://lmstudio.ai/docs/developer/rest/chat).
 
-### 长视频翻译与恢复
+### Long-video translation and recovery
 
-工作台展开“翻译设置与恢复”可调整以下参数，CLI 提供对应选项：
+Expand “翻译设置与恢复” (translation settings and recovery) in the workbench to adjust these parameters; the CLI provides matching options:
 
-| 参数            | 默认                       | 范围 / 用途                                           |
-| --------------- | -------------------------- | ----------------------------------------------------- |
-| 并发            | 1                          | 1 / 2；服务报告容量不足时拒绝，未报告时可能由服务排队 |
-| 每批字幕 / 字符 | 8 / 2000                   | 1–40 / 100–12000；单条字幕不拆开                      |
-| 临时故障重试    | 2                          | 0–3；认证、配置和超时不会盲目重试                     |
-| 超时            | 本地 180 秒、OpenAI 120 秒 | 5–3600 秒；本地可用 `LM_STUDIO_TIMEOUT` 改默认值      |
-| 输出上限        | 4096 tokens                | 128–32768；过少可能使正文截断                         |
-| 模型思考        | 模型默认                   | 仅开放服务报告支持的选项；旧版本可在 LM Studio 中设置 |
-| 恢复            | 开启                       | 只翻译当前字幕 / 设置尚未完成的部分                   |
+| Parameter                | Default                     | Range / purpose                                                                  |
+| ------------------------ | --------------------------- | -------------------------------------------------------------------------------- |
+| Concurrency              | 1                           | 1 / 2; refused when the service reports insufficient capacity, otherwise may queue at the service |
+| Cues / chars per batch   | 8 / 2000                    | 1–40 / 100–12000; a single cue is never split                                    |
+| Transient retries        | 2                           | 0–3; auth, config, and timeout failures are not retried blindly                  |
+| Timeout                  | local 180 s, OpenAI 120 s   | 5–3600 s; `LM_STUDIO_TIMEOUT` changes the local default                          |
+| Output limit             | 4096 tokens                 | 128–32768; too small may truncate body text                                      |
+| Model reasoning          | model default               | only options the service reports as supported are exposed; on older versions set it in LM Studio |
+| Resume                   | on                          | translates only the parts not finished under the current cues / settings         |
 
-每批通过校验后保存续跑缓存；失败或取消不会修改正式字幕，已保存的译文下次可恢复。CLI 默认将译文检查点和一键流程的 ASR 缓存保存在系统用户缓存目录的 `shengmu/checkpoints` 中，改变 `--output-dir` 后仍可续跑，不向共享输出目录新增 `.translation-cache`。使用 `--checkpoint-dir <目录>` 或 `SHENGMU_CHECKPOINT_DIR` 指定缓存目录，命令行选项优先。工作台继续使用各项目目录的 `.translation-cache/`，随项目删除。
+A resume cache is saved after each batch passes validation; failure or cancellation never modifies the formal subtitles, and saved translations resume next time. By default the CLI stores translation checkpoints and the one-step flow's ASR cache in `shengmu/checkpoints` under the OS user cache directory, so reruns survive a changed `--output-dir` without adding `.translation-cache` to a shared output directory. Use `--checkpoint-dir <dir>` or `SHENGMU_CHECKPOINT_DIR` to set the cache directory; the CLI option wins. The workbench keeps using `.translation-cache/` inside each project directory, deleted with the project.
 
-升级后首次在原输出目录续跑，会读取并复制该目录旧的 `.translation-cache`，保留原文件；之后可以更换输出目录。直接选择旧缓存位置可使用 `--checkpoint-dir subtitles/.translation-cache`。修改原文、时间、目标语言、模型标识或思考模式会隔离旧检查点；更换同一标识背后的权重 / 模板时请用 `--no-resume` 重新翻译。超时、输出上限、批大小、重试和并发可以调整后继续。缓存包含字幕文本，可删除指定缓存目录清理；不要让多个 CLI 进程同时写同一检查点。
+The first resume in the original output directory after upgrading reads and copies that directory's legacy `.translation-cache`, keeping the original files; you can change output directories afterwards. To select the old cache location directly, use `--checkpoint-dir subtitles/.translation-cache`. Changing source text, timing, target language, model identifier, or reasoning mode isolates old checkpoints; use `--no-resume` when the weights / template behind the same identifier changed. Timeout, output limit, batch size, retries, and concurrency can be adjusted and then continued. Caches contain subtitle text—delete a specific cache directory to clear it, and never let multiple CLI processes write the same checkpoint at once.
 
-上下文、截断和格式错误会拆半批次，单条仍失败时明确报出编号。进度显示完成字幕、恢复数量、运行时间和重试 / 拆批次数；取消需等待当前请求返回或超时，之后停止提交新批次。并发 2 的实际速度由模型格式、服务版本、内存和服务设置决定，不能保证报告中的 2.1 倍收益。
+Context, truncation, and format errors halve the batch; a single still-failing cue is reported with its number. Progress shows finished cues, resumed counts, elapsed time, and retry / split counts; cancellation waits for the in-flight request to return or time out before stopping new submissions. The real speed of concurrency 2 depends on the model format, server version, memory, and service settings—the reported 2.1× gain is not guaranteed.
 
-在“识别提示与质量选项”可选择 `standard`、`less-repetition` 或 `soft-speech`，并覆盖压缩率、平均概率、无语音和 VAD 阈值。默认保持 `standard`，切换预设不保证消除无语音幻觉。后两套方案需要试听验证：减少重复可能漏低置信度对白，轻声方案可能增加噪声字幕。检测保留诊断分数，同时检查跨字幕的短词 / 碎片循环；长时间低字速单独标为时间轴可疑，估算词时间会明确提示。正常拖长音不作为单独的低字速疑点。检测仅标记，不能代替试听；质量检查可定位，删除标记字幕可撤销。JSON v2 包含可选 `diagnostics` 和 `suspicions`，旧 JSON 仍可读取。
+Under “识别提示与质量选项” (recognition prompt and quality options) you can pick `standard`, `less-repetition`, or `soft-speech`, and override compression-ratio, average-probability, no-speech, and VAD thresholds. `standard` stays the default, and switching presets does not guarantee hallucination removal. The latter two profiles need listening verification: less-repetition may drop low-confidence dialogue, and soft-speech may add noise captions. Detection keeps diagnostic scores and also checks short-word / fragment loops across cues; long spans of low characters-per-second are separately flagged as timing-suspicious, and estimated word times are clearly marked. Normally elongated vowels are not flagged as slow on their own. Detection only marks—it cannot replace listening; quality checks can locate cues, and deleting flagged cues is undoable. JSON v2 carries optional `diagnostics` and `suspicions`; old JSON still reads.
 
-`shengmu doctor` 检查实际烧录滤镜和编码器，无网络请求；`shengmu doctor --network` 额外探测模型下载服务及本机 LM Studio，不下载模型或执行推理。烧录需要 `ass` / `libx264` / `aac`，字幕轨需要 `aac` / `mov_text`，不依赖 `drawtext`。缺少能力时工作台禁用相应导出，后端也提前拒绝。程序在导入引擎前默认设置 `ORT_DISABLE_TELEMETRY=1`，不会删除已有文件。
+`shengmu doctor` checks the real burn-in filters and encoders with no network requests; `shengmu doctor --network` additionally probes model download services and local LM Studio without downloading models or running inference. Burn-in needs `ass` / `libx264` / `aac`, subtitle tracks need `aac` / `mov_text`, and neither depends on `drawtext`. When a capability is missing, the workbench disables the corresponding export and the backend rejects it early. The program sets `ORT_DISABLE_TELEMETRY=1` by default before importing engines and never deletes existing files.
 
-`shengmu doctor --output-dir <目录>` 使用自己的临时文件探测写入、替换、硬链接及独占创建，结束后清理；目录不存在时会创建。转写 / 翻译任务开始前也会自动预检输出目录。SMB 不支持硬链接时，不覆盖导出回退到独占创建，仍拒绝覆盖已有文件；复制失败会清理本次创建的半成品。回退期间其他程序可能暂时读到不完整文件，替换探测成功也不代表网络存储的持久性保证。翻译回调按实际进度变化发送，等待期间每两秒更新耗时；CLI 去重并节流，保留完成和重试 / 拆批提示。
+`shengmu doctor --output-dir <dir>` uses its own temporary files to probe writing, replacement, hard links, and exclusive creation, cleaning up afterwards and creating the directory if missing. Transcribe / translate jobs also pre-check their output directory. When SMB lacks hard links, no-overwrite export falls back to exclusive creation and still refuses to overwrite existing files; a failed copy cleans up its half-written artifacts. During the fallback window other programs may briefly read an incomplete file, and a successful replace probe does not prove network-storage durability. Translation progress callbacks fire on real progress, with elapsed time updated every two seconds while waiting; the CLI deduplicates and throttles while keeping completion and retry / split notices.
 
-脚本轮询 **转写看 `job.status`，翻译 / 烧录 / 封装看 `job.operation.status`**。翻译时转写状态仍为 `done`；不能据此判断翻译完成。操作终态为 `done` / `error` / `cancelled`，翻译详情在 `operation.stats`。重启后中断操作保留设置和进度，标记 `error` / `interrupted=true`，同设置继续可恢复检查点。详细设计和状态字段见 [优化方案](docs/optimization-plan.md)。
+For scripting, poll **`job.status` for transcription and `job.operation.status` for translation / burn-in / muxing**. `job.status` stays `done` during translation and cannot tell you it finished. Operation terminal states are `done` / `error` / `cancelled`, with translation details in `operation.stats`. Interrupted operations keep their settings and progress after restart, marked `error` / `interrupted=true`, and resuming with the same settings restores the checkpoint.
 
-自动区分说话人是额外依赖，建议独立 Python 3.11 / 3.12 环境：
+Automatic speaker diarization is an extra dependency; a separate Python 3.11 / 3.12 environment is recommended:
 
 ```bash
 python -m pip install -e ".[local,openai,diarization]"
-export HF_TOKEN="你的 Hugging Face Token"
+export HF_TOKEN="your Hugging Face token"
 shengmu gui
 ```
 
-首次使用需在 [Community-1 模型页面](https://huggingface.co/pyannote/speaker-diarization-community-1) 接受访问条款，然后由程序下载模型并在本机推理；本项目不会代你接受条款。也可设置 `SHENGMU_DIARIZATION_MODEL=/path/to/community-1` 使用离线模型目录。已知人数时可填写说话人数，程序按词时间和说话人区间切分字幕；名称可在校对行中修改。未安装引擎或未配置权限时会给出具体提示，普通转写和手动标注仍可使用。基础 `[all]` 不含体积较大的 pyannote / PyTorch。
+On first use, accept the access terms on the [Community-1 model page](https://huggingface.co/pyannote/speaker-diarization-community-1), then let the program download the model and run it locally; this project does not accept terms on your behalf. You can also set `SHENGMU_DIARIZATION_MODEL=/path/to/community-1` to use an offline model directory. When the speaker count is known you can fill it in; the program splits cues by word timing and speaker segments, and names can be edited in proofreading rows. When the engine is not installed or access is not granted, a specific message is shown; normal transcription and manual labeling still work. The base `[all]` extra does not include the large pyannote / PyTorch packages.
 
 ## CLI
 
-### 本地模型
+### Local model
 
 ```bash
 shengmu transcribe "video.mp4" --engine local --model small --language zh \
   --format srt vtt ass txt json --output-dir subtitles
 ```
 
-本机首次运行建议先使用 `tiny` 或 `base` 验证流程，再根据准确度需求选择 `small` / `medium` / `large-v3`。本地转写速度和内存取决于模型及硬件。
+On a first local run, verify the flow with `tiny` or `base`, then pick `small` / `medium` / `large-v3` according to your accuracy needs. Local transcription speed and memory depend on the model and hardware.
 
 ```bash
-# Mac / 通用 CPU 默认使用 int8；不使用 CUDA 或 MPS
+# Mac / generic CPU defaults to int8; no CUDA or MPS
 shengmu transcribe video.mp4 --model small --device cpu --compute-type int8
 
-# NVIDIA GPU；需另行配置兼容的 CUDA / cuDNN
+# NVIDIA GPU; compatible CUDA / cuDNN must be configured separately
 shengmu transcribe video.mp4 --model large-v3 --device cuda --compute-type float16
 
-# 使用已下载的 faster-whisper / CTranslate2 模型目录
+# Use a downloaded faster-whisper / CTranslate2 model directory
 shengmu transcribe video.mp4 --model /path/to/model
 ```
 
-可通过 `SHENGMU_MODEL_DIR` 指定模型缓存目录。默认使用模型库自己的缓存位置。
+`SHENGMU_MODEL_DIR` sets the model cache directory. By default the model library's own cache location is used.
 
 ### OpenAI API
 
-在启动 GUI 或 CLI **之前**配置 Key：
+Set the key **before** starting the GUI or CLI:
 
 ```bash
-export OPENAI_API_KEY="你的 API Key"
+export OPENAI_API_KEY="your API key"
 shengmu transcribe video.mp4 --engine openai --language zh --format srt json
 ```
 
 ```powershell
-$env:OPENAI_API_KEY="你的 API Key"
+$env:OPENAI_API_KEY="your API key"
 shengmu gui
 ```
 
-API 模式固定使用 `whisper-1`，因为它支持字幕需要的结构化时间戳。`--model` 是本地模型选项，不会改变 API 模型。音频将发送到配置的 OpenAI 服务并消耗 API 额度。
+API mode always uses `whisper-1`, because it supports the structured timestamps subtitles need. `--model` is a local-model option and does not change the API model. Audio is sent to the configured OpenAI service and consumes API quota.
 
-可使用 `OPENAI_BASE_URL` 接入兼容服务，但服务必须实现 `whisper-1`、`verbose_json`、`segments` 和 `timestamp_granularities`。兼容网关的功能由服务方决定。
+`OPENAI_BASE_URL` can point at a compatible service, but the service must implement `whisper-1`, `verbose_json`, `segments`, and `timestamp_granularities`. What a compatible gateway offers is decided by the provider.
 
-API 请求设有 120 秒超时及最多 2 次重试。以 16 kHz、单声道、16 位 WAV 分块，每块不超过约 19.2 MB；`--chunk-seconds 30` 至 `600` 可以调整最大分块长度。在切点前 5 秒内寻找至少 0.3 秒的低音量区间，优先在静音中间切分；全程保留所有音频采样，恢复完整时间轴。找不到静音时退回长度上限，因此连续语音的边界仍需校对。下一块的 prompt 包含用户提示及上一块最后最多 400 字符。兼容服务没有词级时间戳时使用片段时间按文本比例切分，精度低于真实词级对齐。
+API requests have a 120-second timeout and up to 2 retries. Audio is chunked as 16 kHz, mono, 16-bit WAV, each chunk at most about 19.2 MB; `--chunk-seconds 30` to `600` adjusts the maximum chunk length. Within 5 seconds before the cut point the program looks for a low-volume region of at least 0.3 seconds, preferably splitting at the middle of silence; every audio sample is preserved and the full timeline is restored. When no silence is found it falls back to the length limit, so continuous-speech boundaries still need proofreading. The next chunk's prompt contains the user prompt plus up to the last 400 characters of the previous chunk. Compatible services without word timestamps get proportional splitting by segment text, which is less precise than real word-level alignment.
 
-### 中文与质量选项
+### Chinese and quality options
 
-明确选择 `--language zh` 且没有自定义 prompt 时，默认提示使用简体普通话并添加标点。自动检测语言时不强加中文 prompt；这是识别提示而不是强制简繁转换，输出仍需校对。设置 `--prompt` 会替换默认提示。
+With `--language zh` explicitly chosen and no custom prompt, the default prompt requests Simplified Mandarin with punctuation. Auto-detected languages do not get a Chinese prompt; this is a recognition hint, not forced Traditional-to-Simplified conversion, and the output still needs proofreading. Setting `--prompt` replaces the default hint.
 
-本地引擎默认 `condition_on_previous_text=False`，减少长音频的重复；如需使用前文可加 `--condition-on-previous-text`，GUI 中也有对应选项。默认只过滤与已知幻觉短语完全匹配的孤立片段，例如 Amara.org 社区字幕和特定点赞订阅结尾；不会删除包含这些词语的正常对话。真实音频确实包含这些结尾时，用 `--no-filter-hallucinations` 或取消 GUI 勾选保留。该过滤不是通用幻觉检测。
+The local engine defaults `condition_on_previous_text=False` to reduce repetition over long audio; add `--condition-on-previous-text` or the GUI checkbox if you want it. By default only isolated segments that fully match known hallucination phrases are filtered—for example Amara.org community subtitles and certain like-and-subscribe endings; normal dialogue containing those words is not removed. If the audio genuinely contains such endings, keep them with `--no-filter-hallucinations` or the GUI checkbox. This filter is not general-purpose hallucination detection.
 
-字幕目标时长约 1–7 秒；短语音不会强行延长，避免覆盖后续语音。缺少词时间戳、异常词时间戳或超长单词时使用比例对齐兜底，不保证逐词精确。
+Target cue duration is about 1–7 seconds; short speech is not stretched, to avoid covering following speech. Missing word timestamps, abnormal word timestamps, or overlong words fall back to proportional alignment without guaranteed per-word precision.
 
-### 多音轨、提示与脚本
+### Multiple tracks, prompts, and scripting
 
 ```bash
 shengmu inspect video.mkv
-# --track 是 ffprobe 的流编号，不是第几个音轨；视频流也占编号
-shengmu transcribe video.mkv --track 2 --language zh --prompt "声幕, 专业术语" --format srt
+# --track is the ffprobe stream index, not the audio-track ordinal; video streams count too
+shengmu transcribe video.mkv --track 2 --language zh --prompt "Shengmu, technical terms" --format srt
 
-# --quiet：标准输出为结果 JSON，错误到标准错误
+# --quiet: result JSON on stdout, errors on stderr
 shengmu transcribe video.mp4 --quiet --format srt json
 
-# 已有字幕转格式，不再次调用 AI
+# Convert existing subtitles without calling AI again
 shengmu export subtitles/video.json --format vtt ass --output-dir converted
 
-# 已有 JSON 翻译为中文，默认输出双语 SRT + JSON
+# Translate existing JSON to Chinese; bilingual SRT + JSON by default
 shengmu translate subtitles/video.json --target zh --provider lmstudio --model your-model
-# 同命令重跑默认恢复；可调整超时 / 并发后继续
+# Rerunning the same command resumes by default; adjust timeout / concurrency to continue
 shengmu translate subtitles/video.json --target zh --model your-model --timeout 600 --concurrency 2
-# 一步：转写 → 翻译 → 双语导出，翻译失败后重跑可恢复 ASR
+# One step: transcribe → translate → bilingual export; reruns after translation failure resume the ASR
 shengmu transcribe video.mp4 --language ja --model medium --translate-to zh \
   --translation-model your-model --translation-timeout 600 --export-mode bilingual --format srt json
-# 从已有译文重新导出，不调用模型
+# Re-export from an existing translation without calling a model
 shengmu export subtitles/video.translated.json --export-mode bilingual --format srt
 
-# 允许覆盖已有字幕，仍禁止覆盖输入文件
+# Allow overwriting existing subtitles; input files are still protected
 shengmu transcribe video.mp4 --format srt --overwrite
 ```
 
-输出示例：
+Output example:
 
 ```json
 { "segments": 42, "language": "zh", "files": ["/path/to/subtitles/video.srt"] }
 ```
 
-命令成功返回 0，输入 / 依赖 / 转写错误返回 1，用户中断返回 130。也可使用 `python -m shengmu` 代替 `shengmu`。诊断时加 `--verbose`（放在子命令前后均可）输出经过 API Key / URL 脱敏的异常链。GUI 后台失败也会记录脱敏堆栈，不会向前端返回堆栈。
+Commands return 0 on success, 1 on input / dependency / transcription errors, and 130 on user interruption. `python -m shengmu` works instead of `shengmu`. Add `--verbose` (before or after the subcommand) while diagnosing to print an exception chain with API keys / URLs redacted. GUI backend failures also log redacted stacks and never return stacks to the frontend.
 
-## 字幕数据格式
+## Subtitle data format
 
-统一的 `Transcript` / `Segment` 使用**秒**作为时间单位。JSON 可以保存和重新转换，不依赖原视频或 AI：
+The unified `Transcript` / `Segment` use **seconds** as the time unit. JSON can be saved and re-converted without the original video or AI:
 
 ```json
 {
@@ -263,34 +261,34 @@ shengmu transcribe video.mp4 --format srt --overwrite
   "language": "zh",
   "engine": "local",
   "model": "small",
-  "segments": [{ "start": 0.5, "end": 2.1, "text": "你好，世界。" }],
+  "segments": [{ "start": 0.5, "end": 2.1, "text": "Hello, world." }],
   "metadata": { "audio_track": 1, "audio_offset": 0.0, "audio_duration": 10.0 }
 }
 ```
 
-SRT / VTT 精度为毫秒，ASS 精度为百分之一秒。JSON v2 保留 `words`（start / end / text / estimated）、`speaker` 和 `translation`，兼容读取 v1。默认拒绝重叠字幕，勾选“允许重叠语音字幕”后可保存按开始时间排序的重叠字幕；识别边界仍默认规整。说话人识别区分发言者，不会分离同时发声的声源或恢复被覆盖的对话。SRT 保留 `AT&T` 等原始文本，不做 HTML 转义；VTT 转义标记字符。ASS 样式字符会转换为全角字符，避免识别文本被误当作样式指令。
+SRT / VTT are millisecond-precise; ASS is centisecond-precise. JSON v2 keeps `words` (start / end / text / estimated), `speaker`, and `translation`, and reads v1. Overlapping cues are rejected by default; with “允许重叠语音字幕” (allow overlapping speech subtitles) checked, overlaps are saved sorted by start time—recognized boundaries are still normalized. Speaker diarization distinguishes who is speaking; it does not separate simultaneous voices or recover covered dialogue. SRT keeps raw text like `AT&T` without HTML escaping; VTT escapes markup characters. ASS style characters are converted to full-width forms so recognized text is not mistaken for styling directives.
 
-## 项目结构
+## Project structure
 
 ```text
 src/shengmu/
-  media.py          ffprobe、FFmpeg、音轨和起始偏移
-  engines.py        本地 / OpenAI 引擎、模型缓存与静音分块
-  captions.py       词级字幕切分、换行及孤立幻觉过滤
-  diagnostics.py    环境检查与脱敏诊断堆栈
-  models.py         统一字幕数据和校验
-  pipeline.py       两种入口共用的处理流程
-  exporters.py      五种格式、临时写入和覆盖保护
-  cli.py            命令行入口
-  server.py         本地 API、任务队列、编辑和下载
-  web/              无需前端构建的 GUI
-tests/              格式、真实 FFmpeg、API 合约、GUI 接口测试
-examples/           示例 JSON 及 SRT
+  media.py          ffprobe, FFmpeg, audio tracks, and start offsets
+  engines.py        local / OpenAI engines, model cache, and silence chunking
+  captions.py       word-level caption splitting, wrapping, isolated-hallucination filter
+  diagnostics.py    environment checks and redacted diagnostic stacks
+  models.py         unified subtitle data and validation
+  pipeline.py       processing flow shared by both entry points
+  exporters.py      five formats, atomic writes, and overwrite protection
+  cli.py            command-line entry
+  server.py         local API, job queue, editing, and downloads
+  web/              GUI with no frontend build
+tests/              format, real-FFmpeg, API-contract, and GUI API tests
+examples/           sample JSON and SRT
 ```
 
-添加新的 AI 服务时，实现 `Engine` 协议，并在 `get_engine` 注册即可。CLI 和 GUI 自动复用后续流程。
+To add another AI service, implement the `Engine` protocol and register it in `get_engine`. The CLI and GUI automatically reuse the rest of the pipeline.
 
-## 开发与测试
+## Development and testing
 
 ```bash
 python -m pip install -e ".[all,dev]"
@@ -304,298 +302,21 @@ node --check src/shengmu/web/studio.js
 python -m build
 ```
 
-测试使用合成的多音轨媒体和模拟的 API 响应，不会上传用户文件或调用付费 API。媒体测试需要 FFmpeg / ffprobe；OpenAI SDK 合约测试在未安装 SDK 时跳过。JavaScript 单元测试使用 Node.js 22 内置测试运行器，无需 npm 依赖或前端构建。开发依赖同时安装 httpx2 供新版 Starlette TestClient 使用，并保留 httpx 供 OpenAI SDK 合约测试使用。
+Tests use synthetic multi-track media and mocked API responses—user files are never uploaded and paid APIs are never called. Media tests need FFmpeg / ffprobe; OpenAI SDK contract tests are skipped when the SDK is absent. JavaScript unit tests use the Node.js 22 built-in test runner, with no npm dependencies or frontend build. Dev dependencies install both httpx2 for the newer Starlette TestClient and httpx for the OpenAI SDK contract tests.
 
-GitHub Actions 在 Ubuntu、macOS、Windows × Python 3.10 / 3.12 上安装 FFmpeg、运行 pytest / ruff / JavaScript 测试，并构建发布包。配置 CI 不等于已经在全部平台实测；实际验证结果见 [验证记录](VALIDATION.md)。
+GitHub Actions installs FFmpeg on Ubuntu, macOS, and Windows × Python 3.10 / 3.12, runs pytest / ruff / JavaScript tests, and builds release packages. Configuring CI is not a claim of completed testing on every platform.
 
-## 实用边界
+## Practical limits
 
-- 取消任务是协作式的：FFmpeg 可直接停止；本地模型加载 / 推理和已发出的 API 请求需等当前操作返回。已经开始的云请求可能计费。
-- 单用户本地工具，不适合作为公网多用户服务。GUI 使用原子写入的本地项目记录，CLI 输出保存在指定目录。
-- 对音乐、口音、多人重叠语音和噪声较大的音频，字幕准确度及时间对齐仍需人工校对。
-- 音轨起始偏移会恢复到视频时间轴；特殊时间戳断续或损坏的媒体建议先转换为常规格式。
+- Cancellation is cooperative: FFmpeg can stop directly; local model loading / inference and already-sent API requests must wait for the current operation to return. Cloud requests already sent may still be billed.
+- A single-user local tool, not suitable as a public multi-user service. The GUI uses atomically written local project records; CLI output is saved to the chosen directory.
+- Music, accents, overlapping speakers, and noisy audio still need manual proofreading for caption accuracy and timing alignment.
+- Audio-track start offsets are restored to the video timeline; media with unusual gaps or damaged timestamps should be converted to a regular format first.
 
-## 参考文档
+## References
 
-- [OpenAI 官方语音转写与时间戳文档](https://developers.openai.com/api/docs/guides/speech-to-text)
-- [faster-whisper 官方项目](https://github.com/SYSTRAN/faster-whisper)
-- [FFmpeg 官方文档](https://ffmpeg.org/ffmpeg.html)
+- [OpenAI speech-to-text and timestamps documentation](https://developers.openai.com/api/docs/guides/speech-to-text)
+- [faster-whisper project](https://github.com/SYSTRAN/faster-whisper)
+- [FFmpeg documentation](https://ffmpeg.org/ffmpeg.html)
 
-MIT License。
-
----
-
-## English
-
-### Shengmu — AI subtitles for video and audio
-
-Shengmu is a local browser application and CLI built on one Python transcription pipeline. FFmpeg extracts the selected audio track; **faster-whisper** runs locally, or **OpenAI whisper-1** transcribes through the configured API. Export **SRT, WebVTT, ASS, TXT, and JSON**.
-
-### Features
-
-- Inspect duration, audio stream IDs, languages, channel counts, and delayed-track offsets with ffprobe.
-- Local CPU / NVIDIA CUDA transcription, language detection, vocabulary prompts, voice activity detection, and word timestamps. Reuse the most recently loaded model in the same process.
-- Readable captions: prefer punctuation boundaries, at most two lines and seven seconds per cue; up to 20 characters per line for Chinese / Japanese / Korean and 42 for other text.
-- API chunks are bounded to 30–600 seconds. Look for at least 0.3 seconds of quiet audio within the last five seconds before the limit, preserve every sample, and carry the previous chunk's final 400 characters into the next prompt.
-- GUI drag-and-drop, track selection, progress, cancellation, video preview, text / timing edits, add, split, merge, delete, undo, save, and download. Playback uses a cached position and binary search; edits update only affected rows and timeline blocks.
-- Local-only service, session-token protection for write requests, and server-side API keys. Uploaded source files can be released without losing finished subtitles.
-
-### Installation
-
-Python **3.11 or 3.12** is recommended; Python 3.10+ is supported by the project. Install FFmpeg and ffprobe first:
-
-```bash
-# macOS
-brew install ffmpeg
-# Debian / Ubuntu
-sudo apt-get update
-sudo apt-get install ffmpeg
-```
-
-On Windows, use `winget install Gyan.FFmpeg` in PowerShell and reopen the terminal.
-
-From the repository directory, on macOS / Linux:
-
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e ".[all]"
-shengmu doctor
-shengmu gui
-```
-
-On Windows:
-
-```powershell
-py -3.12 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -e ".[all]"
-shengmu doctor
-shengmu gui
-```
-
-Replace `[all]` with `[local]` or `[openai]` to install only one engine. Use the declared dependencies: the PyAV version range avoids a known faster-whisper decoder incompatibility. Set `FFMPEG_BINARY` / `FFPROBE_BINARY` to absolute executable paths when they are not on PATH. `.env.example` is a reference only; `.env` is **not automatically loaded**.
-
-### Browser workflow
-
-The GUI labels remain in Chinese; this README is available in three languages. `shengmu gui` opens <http://127.0.0.1:8765>. Select a file → choose an audio track and engine → choose output formats → generate → proofread → save → download. Try `examples/local-demo.mp4` with Tiny and English. After installing into `.venv`, double-click `start-gui.command` on macOS or `start-gui.bat` on Windows. These scripts use the repository's `models` cache unless `SHENGMU_MODEL_DIR` is already set.
-
-Use `shengmu gui --port 9000 --no-browser` to change the port or skip opening a browser. Unsupported browser codecs do not prevent transcription, but cannot be previewed.
-
-GUI projects and uploads persist in `.shengmu/workspace` (override with `--workspace` or `SHENGMU_WORKSPACE`): **2 GB per file, 4 GB total uploaded source storage**, including in-flight uploads; up to 30 source files, 100 jobs, and five active / queued jobs. Transcription runs serially. Replacing a source preserves the previous project; “释放源文件缓存” releases it manually. Active-job sources cannot be deleted. Finished subtitles remain editable and downloadable after release. Projects do not expire and survive server restarts. Drafts autosave after edits; explicit save updates downloads. Interrupted tasks can be retried. Use the source cache list and delete completed tasks to free capacity.
-
-For SMB / NAS videos, connect the share through the OS first, then enter its full file path under “直接读取本地 / SMB 视频”: `/Volumes/share/video.mp4` on macOS, `\\server\share\video.mp4` or a mapped drive on Windows, or a mounted path on Linux. The app reads the source directly without uploading a copy. Linked sources do not consume upload byte quotas, but count toward the 30-source limit. Credentials stay with the OS; raw `smb://` addresses are unsupported. Waveform caches and outputs stay in the local workspace; removing a reference never deletes the original file. Reconnect the same share/path to resume reading after a disconnection. Re-add a source if its size or modification time changes. Local temporary audio / output space is still required.
-
-“新增” inserts a cue into free time at or after the playback position. Place the text cursor inside a cue and press “拆” to split: use the current playback time if inside the cue, otherwise estimate by text position. “并” merges with the next cue. “撤销” restores the last operation, up to 100 operations; Ctrl / Cmd + Z works outside editable fields. “保存并导出” updates downloads. GUI models are restricted to `tiny`, `base`, `small`, `medium`, `large-v3`, and `turbo`; use the CLI for custom model paths or repositories.
-
-### CLI examples
-
-```bash
-shengmu transcribe video.mp4 --model small --language zh \
-  --format srt vtt ass txt json --output-dir subtitles
-shengmu transcribe video.mp4 --device cpu --compute-type int8
-shengmu transcribe video.mp4 --model large-v3 --device cuda --compute-type float16
-shengmu transcribe video.mp4 --model /path/to/model
-shengmu inspect video.mkv
-shengmu transcribe video.mkv --track 2 --prompt "Names and terminology"
-shengmu export subtitles/video.json --format vtt ass --output-dir converted
-shengmu transcribe video.mp4 --quiet --format srt json
-shengmu transcribe video.mp4 --overwrite --verbose
-```
-
-`--track` is the ffprobe stream ID, not the audio-track ordinal. Mac / CPU defaults are CPU + INT8; CUDA requires compatible CUDA / cuDNN and NVIDIA hardware. `SHENGMU_MODEL_DIR` selects the model download cache. Existing output files are protected unless `--overwrite` is given; the input file is always protected. `--quiet` writes result JSON to stdout; errors go to stderr. Exit codes: 0 success, 1 failure, 130 interruption. `python -m shengmu` is also supported. `--verbose`, before or after the subcommand, prints a redacted exception chain; GUI failures log redacted traces without returning stacks to the browser.
-
-For OpenAI, set the key **before starting** the CLI or GUI:
-
-```bash
-export OPENAI_API_KEY="your API key"
-shengmu transcribe video.mp4 --engine openai --language en --format srt json
-```
-
-PowerShell: `$env:OPENAI_API_KEY="your API key"`. API mode always uses `whisper-1`; `--model` only affects local transcription. Audio is sent to the configured service and may incur charges. `OPENAI_BASE_URL` may point to a compatible gateway, which must support `whisper-1`, `verbose_json`, segment timestamps, and `timestamp_granularities`. Requests use a 120-second timeout and up to two retries. `--chunk-seconds` sets the maximum chunk length (30–600); a 600-second mono 16 kHz / 16-bit WAV is about 19.2 MB. Without a nearby quiet interval, chunking falls back to the length limit: continuous-speech boundaries still need review. Without word timestamps, caption splitting estimates timing from segment text.
-
-### Chinese and quality options
-
-With `--language zh` and no custom prompt, the default prompt requests punctuated Simplified Mandarin. Language auto-detection does not impose a Chinese prompt. This is guidance, **not guaranteed Traditional-to-Simplified conversion**; `--prompt` replaces it.
-
-Local `condition_on_previous_text` defaults to false to reduce repetition. Enable it with `--condition-on-previous-text` or the GUI checkbox. Known isolated hallucination phrases are filtered only on a complete normalized match, not when mentioned inside normal dialogue. Disable with `--no-filter-hallucinations` if the recording genuinely contains those phrases. This is not general-purpose hallucination detection.
-
-Short speech is not artificially extended to one second. Missing / invalid word timestamps and unusually long words use proportional timing as a fallback; manual review is still necessary.
-
-### Data, development, and limitations
-
-JSON uses schema version 2 (and reads version 1) and timestamps in seconds; it can be edited and re-exported without the original media or another AI request. SRT / VTT use milliseconds, ASS uses centiseconds, and TXT has no timestamps. SRT retains raw text such as `AT&T`; VTT escapes markup; ASS style-control characters are neutralized.
-
-GUI includes batch jobs, project history, ZIP downloads, draft recovery, find/replace, redo, loop playback, waveform timing, custom layout/quality checks, subtitle styles, bilingual editing, video burn-in and MP4 subtitle tracks. Optional translation uses OpenAI Responses / Structured Outputs or a local LM Studio server; optional diarization uses pyannote Community-1 (install `[diarization]`, configure `HF_TOKEN` after accepting model conditions). JSON v2 stores word timing, speaker and translation and reads v1. Word highlighting supports original captions; estimated timing is marked. ASR overlaps are normalized, while manual overlaps can be enabled explicitly; diarization does not separate overlapping voices. Music, accents, noisy recordings, and overlapping speech require proofreading. Delayed audio offsets are restored; damaged or discontinuous media timestamps may need conversion first.
-
-For local translation, [install LM Studio](https://lmstudio.ai/download), load a text model and start **Developer → Start server**. Select **LM Studio 本地** in the workbench. Native model discovery filters known embedding models and reports loaded state, context and parallel capacity, with v0 / compatible fallbacks for older versions. `LM_STUDIO_BASE_URL` defaults to `http://127.0.0.1:1234/v1` and only accepts HTTP loopback hosts; `LM_STUDIO_API_KEY` is optional authentication. No OpenAI extra/key is required. Shengmu does not install LM Studio or download its models.
-
-`shengmu translate input.json --target zh --model your-model` produces bilingual SRT + JSON by default; `transcribe --translate-to zh --translation-model your-model` chains ASR and translation, and `export --export-mode bilingual` exports existing translations. Since 0.3.1, CLI translation / ASR checkpoints default to the OS user cache (`shengmu/checkpoints`), independent of the output directory. Override with `--checkpoint-dir` or `SHENGMU_CHECKPOINT_DIR`; the flag takes precedence. Rerun once with the old output directory to copy its legacy `.translation-cache` without deleting it, then switch output directories. To select the legacy location directly, use `--checkpoint-dir subtitles/.translation-cache`. GUI checkpoints stay inside each project's `.translation-cache`. Failures preserve formal subtitles; changed text/times or translation identity invalidate checkpoints. Use `--no-resume` after changing model weights under the same identifier, and `--overwrite` for existing final outputs. Checkpoints contain subtitle text; remove their directory to clear them. Concurrent CLI processes must not share the same checkpoint.
-
-Translation settings expose concurrency 1 / 2, bounded transient retries, recursive batch splitting, timeout, output budget and model-supported reasoning. Local timeout defaults to 180 seconds (`LM_STUDIO_TIMEOUT`), OpenAI to 120; `--timeout` allows 5–3600. Default reasoning uses compatible strict JSON Schema; explicit reasoning uses the native chat API with prompt-based JSON and strict application validation. Parallel speedups depend on model/server capacity. Repetition is flagged for review and reversible deletion; ASR profiles and threshold overrides are available. `doctor` checks required FFmpeg filters/encoders without network access; `doctor --network` adds explicit connectivity probes. ONNX Runtime telemetry is disabled by default before engine imports.
-
-`doctor --output-dir PATH` probes writing, replacement, hard links and exclusive creation using temporary files, creating the directory if necessary. Tasks also check their output directory before inference. On shares without hard links, no-overwrite exports use exclusive creation; existing files remain protected and failed copies are cleaned up. Other readers can see an incomplete copy while it is being written. Progress is deduplicated and throttled, with two-second waiting heartbeats for the GUI. Quality flags distinguish mixed word / fragment loops from suspicious slow or estimated timing, and never delete cues automatically. The default ASR profile remains `standard`; switching profiles does not guarantee hallucination removal. Native v0 list-shaped capabilities and missing or malformed optional reasoning fields are handled conservatively.
-
-Poll `job.status` for ASR, but `job.operation.status` for translation/video operations. Translation progress details are in `operation.stats`; `job.status=done` does not mean translation has finished. Interrupted operations retain settings/progress for recovery. See the [implementation design](docs/optimization-plan.md) and [validation record](VALIDATION.md).
-
-Cancellation is cooperative: FFmpeg can stop immediately, while model loading / inference or an in-flight API request must return first. Already-sent requests may be billed. This is a single-user local tool, not a public multi-user service; CLI outputs and GUI projects both persist. The model manager can download/resume/remove managed models and show existing shared cache availability; common settings can be saved.
-
-```bash
-python -m pip install -e ".[all,dev]"
-pytest -q --cov=shengmu --cov-report=term-missing --cov-fail-under=80 -W error
-ruff check .
-ruff format --check .
-node --test tests/test_editor.cjs
-node --check src/shengmu/web/app.js
-node --check src/shengmu/web/editor.js
-node --check src/shengmu/web/studio.js
-python -m build
-```
-
-Tests use synthetic media and mocked API responses, never paid API requests. FFmpeg is required for media tests. Node.js 22 runs editor tests without npm dependencies or a frontend build. `httpx2` supports the newer Starlette TestClient; `httpx` remains for OpenAI SDK contract tests. GitHub Actions covers Ubuntu / macOS / Windows and Python 3.10 / 3.12; configured CI is not a claim of completed cross-platform testing. See [validation records](VALIDATION.md) for what was actually exercised.
-
-The pipeline is organized into `media.py`, `engines.py`, `captions.py`, `models.py`, `pipeline.py`, `exporters.py`, and `diagnostics.py`, with `cli.py`, `server.py`, and plain browser scripts as entry points. Implement the `Engine` protocol and register it in `get_engine` to add another provider. Licensed under MIT.
-
----
-
-## 日本語
-
-### 声幕 Shengmu — 動画・音声の AI 字幕ツール
-
-声幕は、共通の Python 処理パイプラインを使うローカルブラウザー GUI と CLI です。FFmpeg で指定した音声トラックを抽出し、**ローカルの faster-whisper** または **OpenAI whisper-1 API** で文字起こしします。**SRT、WebVTT、ASS、TXT、JSON** に出力できます。
-
-### 主な機能
-
-- ffprobe による再生時間、音声ストリーム番号、言語、チャンネル数、音声開始オフセットの取得。
-- CPU / NVIDIA CUDA、言語自動判定、固有名詞プロンプト、無音除外、単語タイムスタンプ。直近のモデルを同じプロセス内で再利用します。
-- 句読点を優先して字幕を分割。字幕ごとに最大 2 行・7 秒、中国語 / 日本語 / 韓国語は 1 行 20 文字、それ以外は 42 文字まで。
-- API 音声の最大分割時間は 30〜600 秒。上限直前の 5 秒間から 0.3 秒以上の静かな区間を探し、全サンプルを保持して分割します。前のブロックの末尾 400 文字を次のプロンプトに渡します。
-- ドラッグ＆ドロップ、トラック選択、進捗、キャンセル、動画プレビュー、字幕テキスト / 時間編集、追加、分割、結合、削除、元に戻す、再出力。
-- 再生中の字幕検索はキャッシュと二分探索を使用。編集時は変更した行とタイムラインだけを更新します。
-- ローカル専用サービス、書き込み API のセッショントークン保護。API キーはサーバー側で保持し、ブラウザーに渡しません。
-
-### インストール
-
-**Python 3.11 または 3.12** を推奨します。プロジェクトの対応範囲は Python 3.10 以降です。最初に FFmpeg と ffprobe をインストールしてください。
-
-```bash
-# macOS
-brew install ffmpeg
-# Debian / Ubuntu
-sudo apt-get update
-sudo apt-get install ffmpeg
-```
-
-Windows では PowerShell で `winget install Gyan.FFmpeg` を実行し、ターミナルを開き直します。
-
-プロジェクトのディレクトリで、macOS / Linux の場合：
-
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e ".[all]"
-shengmu doctor
-shengmu gui
-```
-
-Windows の場合：
-
-```powershell
-py -3.12 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -e ".[all]"
-shengmu doctor
-shengmu gui
-```
-
-片方のエンジンだけ使う場合は `[all]` を `[local]` または `[openai]` に変更します。faster-whisper と PyAV の既知の互換性問題を避けるため、プロジェクトで指定した依存関係を使用してください。PATH にない場合、`FFMPEG_BINARY` / `FFPROBE_BINARY` に実行ファイルの絶対パスを指定できます。`.env.example` は設定例です。`.env` は**自動読み込みされません**。
-
-### GUI の使い方
-
-`shengmu gui` で <http://127.0.0.1:8765> が開きます。ファイル選択 → 音声トラック / エンジン選択 → 出力形式選択 → 字幕生成 → 校正 → 保存 → ダウンロードの順に操作します。動作確認には `examples/local-demo.mp4`、Tiny モデル、英語を使用できます。
-
-プロジェクトの `.venv` にインストール済みなら、macOS の `start-gui.command` または Windows の `start-gui.bat` をダブルクリックして起動できます。これらは `SHENGMU_MODEL_DIR` が未設定の場合、プロジェクト内の `models` をキャッシュに使用します。`shengmu gui --port 9000 --no-browser` でポート変更 / ブラウザー自動起動の無効化ができます。ブラウザー非対応のコーデックでも文字起こしは可能ですが、動画プレビューはできません。
-
-プロジェクトとアップロードは本機の `.shengmu/workspace` に保存します。`--workspace` または `SHENGMU_WORKSPACE` で変更できます。**1 ファイル 2 GB、アップロード元ファイルの合計 4 GB**（アップロード中も含む）、最大 30 ファイル・100 タスク、処理中 / 待機中は最大 5 タスクです。文字起こしは直列実行します。ファイルの変更時も以前のプロジェクトを保持し、「释放源文件缓存」で手動解放もできます。処理中のタスクが使用するファイルは削除できません。解放後も完成済み字幕の編集とダウンロードは可能です。
-
-SMB / NAS 動画は OS で共有に接続してから、「直接读取本地 / SMB 视频」にファイルの絶対パスを入力します。macOS は `/Volumes/共有/動画.mp4`、Windows は `\\server\share\video.mp4` またはネットワークドライブ、Linux はマウント先のパスです。動画をアップロードせず直接読み取り、参照は 30 ファイル制限に含めますが、アップロード容量を消費しません。認証は OS に任せ、`smb://` への直接接続は行いません。キャッシュと出力はローカルに保存し、参照を削除しても元動画は削除しません。同じ共有 / パスへの再接続で復旧し、サイズや更新時刻が変わった動画は再登録します。一時音声と出力のローカル空き容量は必要です。
-
-プロジェクトと自動保存した下書きはサービス再起動後も復元できます。中断タスクは再試行できます。不要な元ファイルや完了タスクは一覧から削除してください。
-
-GUI の表示言語は中国語です。「新增」で再生位置以降の空き時間に字幕を追加します。文字カーソルを字幕の途中に置き、「拆」で分割します。現在の再生位置が字幕内ならその時刻を使い、それ以外では文字数比で時間を配分します。「并」で次の字幕と結合、「撤销」で直近 100 操作まで元に戻します。入力欄の外では Ctrl / Cmd + Z も使えます。「保存并导出」でダウンロード内容を更新します。
-
-GUI で使用できるモデルは `tiny`、`base`、`small`、`medium`、`large-v3`、`turbo` のみです。任意のモデルディレクトリやリポジトリは CLI から指定してください。
-
-### CLI の例
-
-```bash
-shengmu transcribe video.mp4 --model small --language ja \
-  --format srt vtt ass txt json --output-dir subtitles
-shengmu transcribe video.mp4 --device cpu --compute-type int8
-shengmu transcribe video.mp4 --model large-v3 --device cuda --compute-type float16
-shengmu transcribe video.mp4 --model /path/to/model
-shengmu inspect video.mkv
-shengmu transcribe video.mkv --track 2 --prompt "人名、製品名、専門用語"
-shengmu export subtitles/video.json --format vtt ass --output-dir converted
-shengmu transcribe video.mp4 --quiet --format srt json
-shengmu transcribe video.mp4 --overwrite --verbose
-```
-
-`--track` は ffprobe のストリーム番号で、音声トラックの通し番号ではありません。Mac / CPU では CPU + INT8 が標準です。CUDA には NVIDIA GPU と対応する CUDA / cuDNN が必要です。`SHENGMU_MODEL_DIR` でモデルのダウンロードキャッシュを指定できます。
-
-既存出力は `--overwrite` を指定した場合のみ上書きします。入力ファイルの上書きは常に禁止します。`--quiet` は結果 JSON を標準出力、エラーを標準エラーに出します。終了コードは成功 0、失敗 1、中断 130 です。`python -m shengmu` も使用できます。`--verbose` はサブコマンドの前後どちらにも指定でき、API キー / URL を伏せた例外チェーンを表示します。GUI の失敗も伏字処理したスタックをログに記録し、ブラウザーには返しません。
-
-OpenAI を使う場合は、GUI / CLI を起動する**前**にキーを設定します。
-
-```bash
-export OPENAI_API_KEY="自分の API キー"
-shengmu transcribe video.mp4 --engine openai --language ja --format srt json
-```
-
-PowerShell では `$env:OPENAI_API_KEY="自分の API キー"` を使います。API モードは常に `whisper-1` を使用し、`--model` はローカルモデルにのみ影響します。音声は設定したサービスに送信され、料金が発生する場合があります。
-
-互換サービスには `OPENAI_BASE_URL` を設定できます。サービスは `whisper-1`、`verbose_json`、セグメントタイムスタンプ、`timestamp_granularities` に対応する必要があります。リクエストは 120 秒タイムアウト、最大 2 回再試行です。`--chunk-seconds` で最大分割時間を 30〜600 秒に設定します。600 秒の 16 kHz / モノラル / 16-bit WAV は約 19.2 MB です。近くに静かな区間がなければ時間上限で分割するため、連続発話の境界は校正してください。単語タイムスタンプがないサービスでは、セグメント内の文字数比から時間を推定します。
-
-### 中国語と品質オプション
-
-`--language zh` を指定し、独自プロンプトがない場合は、簡体字と句読点付きの普通話を促すプロンプトを使用します。言語自動判定時に中国語プロンプトを強制しません。これはヒントであり、**繁体字から簡体字への変換を保証するものではありません**。`--prompt` で既定値を置き換えられます。
-
-繰り返しを抑えるため、ローカルの `condition_on_previous_text` は既定で false です。`--condition-on-previous-text` または GUI のチェックボックスで有効にできます。既知の幻覚字幕は、正規化した内容がフレーズ全体に一致する孤立セグメントのみ除外します。通常の会話に含まれる言及は削除しません。実際に録音に含まれる場合は `--no-filter-hallucinations` で無効化できます。汎用的な幻覚検出ではありません。
-
-短い発話を無理に 1 秒まで延ばしません。単語タイムスタンプの欠落 / 異常や極端に長い単語は比例配分で補います。最終的な校正は必要です。
-
-### データ・開発・制約
-
-JSON はスキーマバージョン 2（v1 も読み込み可能）、時間単位は秒です。元動画や AI の再実行なしで編集 / 再出力できます。SRT / VTT はミリ秒、ASS は 1/100 秒の精度、TXT は時間情報なしです。SRT は `AT&T` などの元テキストを保持し、VTT はマークアップをエスケープ、ASS はスタイル制御文字を無害化します。
-
-バッチ処理、履歴、ZIP、自動下書き、検索置換、やり直し、ループ再生、波形・ドラッグ調整、レイアウト・品質確認、字幕スタイル、二言語字幕、焼き込み / MP4 字幕トラックを利用できます。翻訳は OpenAI Responses / Structured Outputs または本機の LM Studio、任意の自動話者識別は pyannote Community-1（`[diarization]` とモデル利用条件への同意、`HF_TOKEN` が必要）を使用します。JSON v2 は単語時刻・話者・訳文を保持し、v1 も読み込めます。単語ハイライトは原文に対応し、推定時刻を明示します。手動編集の重複は設定で許可できます。自動話者識別は同時発話の音源分離ではありません。音楽、訛り、雑音、同時発話では特に校正が必要です。音声開始オフセットは動画タイムラインに復元しますが、破損 / 不連続なタイムスタンプのメディアは事前変換を推奨します。
-
-ローカル翻訳には [LM Studio](https://lmstudio.ai/download) で対話モデルを読み込み、**Developer → Start server** を有効にします。原生モデル一覧から既知の埋め込みモデルを除外し、読み込み状態・コンテキスト・同時処理容量を表示します。旧版は v0 / 互換 API にフォールバックします。`LM_STUDIO_BASE_URL` は既定 `http://127.0.0.1:1234/v1`、HTTP ループバックのみです。認証時は `LM_STUDIO_API_KEY` を設定します。OpenAI Key と追加依存は不要で、本アプリは LM Studio のインストールやモデル取得を行いません。
-
-`shengmu translate input.json --target zh --model your-model`（二言語 SRT + JSON）、`transcribe --translate-to zh --translation-model your-model`、`export --export-mode bilingual` が利用できます。0.3.1 から CLI の訳文 / ASR キャッシュは OS のユーザーキャッシュ内 `shengmu/checkpoints` に保存し、出力先を変更しても続行できます。`--checkpoint-dir` または `SHENGMU_CHECKPOINT_DIR` で変更でき、コマンドライン指定を優先します。旧出力先で一度再実行すると `.translation-cache` をコピーして引き継ぎ、旧ファイルは残します。旧キャッシュを直接指定する場合は `--checkpoint-dir subtitles/.translation-cache` を使用します。GUI は各プロジェクト内の `.translation-cache` を使用します。キャッシュには字幕本文を含み、ディレクトリ削除で消去できます。同一チェックポイントを複数の CLI プロセスで同時に使用しないでください。原文・時刻・翻訳設定を変えると別のチェックポイントを使用します。同じ識別子のモデル重みを変更した場合は `--no-resume`、既存の正式出力には `--overwrite` を使用します。
-
-`doctor --output-dir <ディレクトリ>` は専用の一時ファイルで書き込み・置換・ハードリンク・排他的作成を調べ、終了時に削除します。存在しないディレクトリは作成し、タスク開始前にも自動確認します。SMB がハードリンク非対応の場合は排他的作成に切り替え、既存ファイルを保護し、失敗したコピーを片付けます。コピー中は他のプログラムから未完成ファイルが見える場合があります。進捗は重複と頻度を抑え、待機中の GUI は二秒ごとに更新します。繰り返しと推定 / 低文字速度の時刻異常を区別してマークし、自動削除は行いません。ASR の既定は `standard` のままで、プリセット変更だけで幻覚が解消するとは限りません。
-
-同時処理 1 / 2、限定再試行、再帰的バッチ分割、タイムアウト、出力上限、モデル対応の思考設定を調整できます。ローカルの既定は 180 秒（`LM_STUDIO_TIMEOUT`）、OpenAI は 120 秒で、指定範囲は 5–3600 秒です。既定思考は厳格 JSON Schema、明示的思考は原生 chat API の JSON 指示とアプリ側の厳格検証を使用します。高速化はモデルとサービスに依存します。疑わしい反復をマークし、確認・削除・元に戻す操作を提供します。ASR の反復抑制 / 小声設定と閾値調整も可能です。`doctor` は必要な FFmpeg 機能を確認し、`--network` 指定時のみ接続を探査します。エンジンの読み込み前に ONNX Runtime 遥測を既定で無効化します。
-
-ASR は `job.status`、翻訳と動画出力は `job.operation.status` を確認します。翻訳進捗は `operation.stats` にあります。中断された操作は設定と進捗を保って再開できます。[設計](docs/optimization-plan.md) と [検証記録](VALIDATION.md) を参照してください。
-
-キャンセルは協調的です。FFmpeg は停止できますが、モデル読み込み / 推論や送信済み API リクエストは処理が戻るまで待つ必要があります。送信済みリクエストは課金される場合があります。本ツールはローカルの単一ユーザー向けで、公開マルチユーザーサービスではありません。CLI の出力は保存され、GUI のプロジェクトと下書きも保存されます。モデル管理ではダウンロード、再開、管理対象モデルの削除と共有キャッシュの確認が可能です。
-
-```bash
-python -m pip install -e ".[all,dev]"
-pytest -q --cov=shengmu --cov-report=term-missing --cov-fail-under=80 -W error
-ruff check .
-ruff format --check .
-node --test tests/test_editor.cjs
-node --check src/shengmu/web/app.js
-node --check src/shengmu/web/editor.js
-node --check src/shengmu/web/studio.js
-python -m build
-```
-
-テストは合成メディアと模擬 API 応答を使い、有料 API を呼びません。メディアテストには FFmpeg が必要です。Node.js 22 の標準テスト機能でエディターを検証し、npm 依存やフロントエンドビルドは不要です。新版 Starlette の TestClient 用に `httpx2`、OpenAI SDK 契約テスト用に `httpx` を使用します。
-
-GitHub Actions は Ubuntu / macOS / Windows と Python 3.10 / 3.12 を対象にします。ただし、CI 設定の追加は全 OS の実測完了を意味しません。実際の確認内容は [検証記録](VALIDATION.md) を参照してください。
-
-構成は `media.py`、`engines.py`、`captions.py`、`models.py`、`pipeline.py`、`exporters.py`、`diagnostics.py` と、入口の `cli.py` / `server.py` / ブラウザースクリプトです。`Engine` プロトコルを実装して `get_engine` に登録すると、新しい認識サービスを追加できます。MIT ライセンスです。
+MIT License.
