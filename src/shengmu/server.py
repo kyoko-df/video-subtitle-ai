@@ -28,6 +28,7 @@ from starlette.concurrency import run_in_threadpool
 from . import __version__, lmstudio, model_manager
 from .cache import preserve_json_times, restore_translation_cache
 from .captions import CaptionOptions, quality_report
+from .devices import local_backend, mlx_status
 from .diagnostics import doctor, ensure_output_directory, redacted_traceback
 from .engines import EngineOptions
 from .exporters import FORMATS, export_files
@@ -75,8 +76,8 @@ class JobRequest(ExportSettings):
     model: Literal["tiny", "base", "small", "medium", "large-v3", "turbo"] = "small"
     language: str | None = Field(default=None, max_length=20)
     track: int | None = None
-    device: Literal["cpu", "cuda", "auto"] = "cpu"
-    compute_type: Literal["int8", "float32", "float16", "int8_float16", "auto"] = "int8"
+    device: Literal["cpu", "cuda", "mlx", "auto"] = "cpu"
+    compute_type: Literal["int8", "float32", "float16", "int8_float16", "auto"] = "auto"
     prompt: str = Field(default="", max_length=2000)
     condition_on_previous_text: bool = False
     filter_hallucinations: bool = True
@@ -527,15 +528,17 @@ class Workspace:
                 raise SubtitleError("源文件无法读取或内容已变化，请重新连接共享并再次添加视频。")
             ensure_output_directory(job.directory, overwrite=True)
             r = job.request
+            backend = local_backend(r.device) if r.engine == "local" else "faster-whisper"
+            managed_model = model_manager.model_path(
+                model_manager.model_root(self.root), r.model, backend
+            )
             result = transcribe(
                 job.media.path,
                 EngineOptions(
                     r.engine,
-                    str(model_manager.model_path(model_manager.model_root(self.root), r.model))
-                    if (
-                        model_manager.model_path(model_manager.model_root(self.root), r.model)
-                        / ".complete"
-                    ).is_file()
+                    str(managed_model)
+                    if (managed_model / ".complete").is_file()
+                    and model_manager.model_complete(managed_model, backend)
                     else r.model,
                     r.language,
                     r.device,
@@ -803,6 +806,13 @@ def create_app(
                 raise HTTPException(400, "生成时请选择原文，完成翻译后可导出译文或双语。")
             if not data.formats:
                 raise HTTPException(400, "请至少选择一种字幕格式。")
+            if data.engine == "local":
+                try:
+                    EngineOptions(device=data.device, compute_type=data.compute_type).validate()
+                    if data.device == "mlx" and not (status := mlx_status())["available"]:
+                        raise SubtitleError(status["message"])
+                except SubtitleError as exc:
+                    raise HTTPException(400, str(exc)) from exc
             if data.track is not None and data.track not in {
                 t.index for t in media.info.audio_tracks
             }:
@@ -1220,13 +1230,13 @@ def create_app(
         return {"saved": True}
 
     @app.get("/api/models")
-    def models():
+    def models(backend: Literal["faster-whisper", "mlx"] = "faster-whisper"):
         workspace = app.state.workspace
         root = model_manager.model_root(workspace.root)
         with workspace.lock:
-            inventory = model_manager.model_inventory(root)
+            inventory = model_manager.model_inventory(root, backend)
             for item in inventory:
-                state = workspace.model_downloads.get(item["name"])
+                state = workspace.model_downloads.get(f"{backend}:{item['name']}")
                 if state:
                     item["download"] = {k: v for k, v in state.items() if k != "cancel"}
                     total = state.get("total", 0)
@@ -1235,11 +1245,11 @@ def create_app(
             return inventory
 
     @app.post("/api/models/{name}/download", status_code=202)
-    def download_model(name: str):
+    def download_model(name: str, backend: Literal["faster-whisper", "mlx"] = "faster-whisper"):
         workspace = app.state.workspace
         root = model_manager.model_root(workspace.root)
         try:
-            model_manager.model_path(root, name)
+            model_manager.model_path(root, name, backend)
         except SubtitleError as exc:
             raise HTTPException(400, str(exc)) from exc
         with workspace.lock:
@@ -1255,7 +1265,7 @@ def create_app(
                 "message": "等待下载…",
                 "cancel": threading.Event(),
             }
-            workspace.model_downloads[name] = state
+            workspace.model_downloads[f"{backend}:{name}"] = state
 
         def run():
             def update(done, total, message):
@@ -1268,7 +1278,7 @@ def create_app(
                     )
 
             try:
-                model_manager.download(root, name, update, state["cancel"])
+                model_manager.download(root, name, update, state["cancel"], backend=backend)
                 with workspace.lock:
                     state.update(status="done", progress=1, message="下载完成")
             except Cancelled:
@@ -1288,33 +1298,41 @@ def create_app(
         return {"queued": True}
 
     @app.post("/api/models/{name}/cancel")
-    def cancel_model(name: str):
-        state = app.state.workspace.model_downloads.get(name)
+    def cancel_model(name: str, backend: Literal["faster-whisper", "mlx"] = "faster-whisper"):
+        state = app.state.workspace.model_downloads.get(f"{backend}:{name}")
         if not state:
             raise HTTPException(404, "下载不存在。")
         state["cancel"].set()
         return {"cancelled": True}
 
     @app.delete("/api/models/{name}")
-    def remove_model(name: str):
+    def remove_model(name: str, backend: Literal["faster-whisper", "mlx"] = "faster-whisper"):
         workspace = app.state.workspace
         with workspace.lock:
             if any(
                 j.status not in TERMINAL and j.request.engine == "local"
                 for j in workspace.jobs.values()
-            ) or workspace.model_downloads.get(name, {}).get("status") in {"queued", "running"}:
+            ) or workspace.model_downloads.get(f"{backend}:{name}", {}).get("status") in {
+                "queued",
+                "running",
+            }:
                 raise HTTPException(409, "模型正在使用或下载。")
             try:
-                path = model_manager.model_path(model_manager.model_root(workspace.root), name)
+                path = model_manager.model_path(
+                    model_manager.model_root(workspace.root), name, backend
+                )
             except SubtitleError as exc:
                 raise HTTPException(400, str(exc)) from exc
             from .engines import LocalEngine
+            from .mlx_engine import MLXEngine
 
             with LocalEngine._lock:
                 if LocalEngine._cached_key and LocalEngine._cached_key[0] == str(path):
                     LocalEngine._cached_key = LocalEngine._cached_model = None
+                if MLXEngine._cached_key and MLXEngine._cached_key[0] == str(path):
+                    MLXEngine.clear_cache()
                 shutil.rmtree(path, ignore_errors=True)
-            workspace.model_downloads.pop(name, None)
+            workspace.model_downloads.pop(f"{backend}:{name}", None)
         return {"deleted": True}
 
     @app.get("/api/jobs/{job_id}/files/{fmt}")

@@ -17,6 +17,7 @@ from .captions import (
     repetitive_text,
     split_caption,
 )
+from .devices import local_backend
 from .errors import local_model_error
 from .media import check_cancel
 from .models import Segment, SubtitleError, shift_segment
@@ -30,7 +31,7 @@ class EngineOptions:
     model: str = "small"
     language: str | None = None
     device: str = "cpu"
-    compute_type: str = "int8"
+    compute_type: str = "auto"
     prompt: str = ""
     chunk_seconds: int = 600
     condition_on_previous_text: bool = False
@@ -77,6 +78,9 @@ class EngineOptions:
             if self.vad_threshold is not None
             else result["vad_parameters"]["threshold"]
         }
+        if self.engine == "local" and local_backend(self.device) == "mlx":
+            # mlx-whisper 0.4 does not implement CTranslate2's repetition penalty.
+            result.pop("repetition_penalty", None)
         return result
 
     @property
@@ -93,8 +97,14 @@ class EngineOptions:
             raise SubtitleError("转写引擎必须是 local 或 openai。")
         if not 30 <= self.chunk_seconds <= 600:
             raise SubtitleError("API 分块长度必须在 30 到 600 秒之间。")
-        if self.device not in ("cpu", "cuda", "auto"):
-            raise SubtitleError("设备必须是 cpu、cuda 或 auto。")
+        if self.device not in ("cpu", "cuda", "mlx", "auto"):
+            raise SubtitleError("设备必须是 cpu、cuda、mlx 或 auto。")
+        if (
+            self.engine == "local"
+            and local_backend(self.device) == "mlx"
+            and self.compute_type not in ("auto", "float16", "float32")
+        ):
+            raise SubtitleError("Mac GPU 仅支持 auto、float16 或 float32 精度，请调整计算精度。")
         parameters = self.decoding_parameters()
         for value, low, high in [
             (parameters["compression_ratio_threshold"], 1, 10),
@@ -121,6 +131,14 @@ class LocalEngine:
         self, audio: Path, options: EngineOptions, progress: Progress, cancel: Event | None
     ) -> tuple[list[Segment], str | None, str]:
         with self._lock:
+            from .mlx_engine import MLXEngine
+
+            if local_backend(options.device) == "mlx":
+                # Avoid keeping both full CPU/CUDA and Metal models in unified memory.
+                LocalEngine._cached_key = LocalEngine._cached_model = None
+                return MLXEngine().transcribe(audio, options, progress, cancel)
+            if MLXEngine._cached_key is not None:
+                MLXEngine.clear_cache()
             return self._transcribe(audio, options, progress, cancel)
 
     def _transcribe(
@@ -136,7 +154,9 @@ class LocalEngine:
             key = (
                 options.model,
                 options.device,
-                options.compute_type,
+                ("float16" if options.device == "cuda" else "int8")
+                if options.compute_type == "auto"
+                else options.compute_type,
                 os.environ.get("SHENGMU_MODEL_DIR"),
             )
             if LocalEngine._cached_key != key or LocalEngine._cached_model is None:
@@ -145,7 +165,7 @@ class LocalEngine:
                 LocalEngine._cached_model = WhisperModel(
                     options.model,
                     device=options.device,
-                    compute_type=options.compute_type,
+                    compute_type=key[2],
                     download_root=key[3],
                 )
                 LocalEngine._cached_key = key

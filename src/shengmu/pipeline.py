@@ -6,6 +6,7 @@ from pathlib import Path
 from threading import Event
 from typing import Callable
 
+from .devices import local_backend
 from .engines import Engine, EngineOptions, get_engine
 from .exporters import export_files, preflight_output
 from .media import check_cancel, extract_audio, probe
@@ -68,6 +69,9 @@ def transcribe(
                 "audio_offset": offset,
                 "audio_duration": audio_duration,
                 "asr_profile": options.asr_profile,
+                "asr_backend": local_backend(options.device)
+                if options.engine == "local"
+                else "openai",
                 "asr_parameters": options.decoding_parameters()
                 if options.engine == "local"
                 else {},

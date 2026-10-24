@@ -968,8 +968,10 @@ async function performOperation(kind, body) {
 
 async function refreshModels() {
   clearTimeout(modelTimer);
+  const backend = selectedLocalBackend();
   try {
-    const models = await api("/api/models");
+    const models = await api("/api/models?backend=" + backend);
+    if (backend !== selectedLocalBackend()) return;
     $("model-manager").replaceChildren();
     for (const model of models) {
       const row = document.createElement("div");
@@ -977,6 +979,7 @@ async function refreshModels() {
       const text = document.createElement("span");
       const active = ["queued", "running"].includes(model.download?.status);
       text.textContent =
+        (backend === "mlx" ? "MLX · " : "") +
         model.name +
         " · " +
         (active
@@ -998,7 +1001,8 @@ async function refreshModels() {
           async () => {
             await api(
               `/api/models/${model.name}` +
-                (active ? "/cancel" : model.downloaded ? "" : "/download"),
+                (active ? "/cancel" : model.downloaded ? "" : "/download") +
+                "?backend=" + backend,
               { method: model.downloaded && !active ? "DELETE" : "POST" },
             );
             await refreshModels();

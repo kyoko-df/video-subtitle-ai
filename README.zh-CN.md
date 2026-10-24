@@ -7,7 +7,7 @@
 ## 已实现
 
 - 通过 ffprobe 读取时长、音轨编号、语言、声道和起始偏移；通过 FFmpeg 提取 16 kHz 单声道 PCM 音频。
-- 本地 Whisper 模型转写，支持自动识别语言、CPU / NVIDIA CUDA、词级时间戳、识别提示及静音过滤；复用最近使用的一个模型。
+- 本地 Whisper 模型转写，支持自动识别语言、CPU / NVIDIA CUDA / Apple Silicon GPU（可选 MLX）、词级时间戳、识别提示及静音过滤；复用最近使用的一个模型。
 - 按词级时间戳重新切分字幕，优先在标点处断开；中文 / 日文每行最多 20 字符，其他语言每行最多 42 字符，每条最多 2 行、7 秒。
 - OpenAI `whisper-1` 转写，请求词级和片段时间戳；长音频按最多 600 秒分块，优先在边界前 5 秒内的静音处切分，下一块携带前文提示。
 - 导出 **SRT、WebVTT、ASS、TXT、JSON**；TXT 为纯文本，其余保留时间信息。
@@ -106,7 +106,7 @@ GUI 模型只允许 `tiny`、`base`、`small`、`medium`、`large-v3` 和 `turbo
 - **排版与质检**：设置 CJK / 其他语言每行长度、最多行数、最短 / 最长秒数和每秒字数。质检对原文和译文提示过长、过短、阅读过快及重叠，点击提示定位。重新排版沿用词时间切分；重新切开的字幕会清除译文，需要重新翻译。
 - **样式与视频**：字体、字号、颜色、位置和边距用于预览、ASS 和烧录。导出内容可选原文 / 译文 / 双语，可显示说话人名称。烧录视频编码为 H.264 / AAC；封装字幕轨复制原视频编码、转换音频为 AAC，字幕为 MP4 mov_text。源视频编码若无法封装到 MP4，会给出 FFmpeg 错误，可改用烧录。两种方式保留原媒体全部音轨，长视频导出可取消。
 - **逐词高亮**：保存真实词时间戳；缺失对齐时使用带 `estimated=true` 标记的估算时间。原文预览与 ASS / 烧录支持逐词高亮；译文不伪造词级对齐。手动改文后高亮会退回整句，重新识别可恢复。
-- **模型**：展示模型是否可用、磁盘大小及下载进度。下载固定官方 / 已知 CTranslate2 仓库的指定版本，并可续传。管理器可删除其下载的模型；已有共享 Hugging Face 缓存只显示为可用，避免删除其他程序共享的模型。使用中的本地模型禁止删除。保存常用配置后下次启动自动加载。
+- **模型**：展示模型是否可用、磁盘大小及下载进度。根据计算设备分别管理 CTranslate2 / MLX 模型，下载已知仓库的指定版本，并可续传。管理器可删除其下载的模型；已有共享 Hugging Face 缓存只显示为可用，避免删除其他程序共享的模型。使用中的本地模型禁止删除。保存常用配置后下次启动自动加载。
 
 ### 翻译和自动说话人识别
 
@@ -174,7 +174,7 @@ shengmu transcribe "video.mp4" --engine local --model small --language zh \
 本机首次运行建议先使用 `tiny` 或 `base` 验证流程，再根据准确度需求选择 `small` / `medium` / `large-v3`。本地转写速度和内存取决于模型及硬件。
 
 ```bash
-# Mac / 通用 CPU 默认使用 int8；不使用 CUDA 或 MPS
+# Mac / 通用 CPU 默认使用 int8
 shengmu transcribe video.mp4 --model small --device cpu --compute-type int8
 
 # NVIDIA GPU；需另行配置兼容的 CUDA / cuDNN
@@ -185,6 +185,24 @@ shengmu transcribe video.mp4 --model /path/to/model
 ```
 
 可通过 `SHENGMU_MODEL_DIR` 指定模型缓存目录。默认使用模型库自己的缓存位置。
+
+### Apple Silicon Mac GPU
+
+在 M 系列 Mac 上使用原生 arm64 Python，安装可选 GPU 依赖后重启 GUI：
+
+```bash
+python -m pip install -e ".[all,mlx]"
+shengmu doctor
+shengmu gui
+# 或直接使用 CLI；auto 精度在 Mac GPU 上使用 FP16
+shengmu transcribe video.mp4 --device mlx --model small --language zh --format srt json
+```
+
+GUI 的“计算设备”选择 **Apple GPU · MLX**，精度选“自动”或 FP16 / FP32。设备选择“自动”时，可用的 MLX 优先用于 Apple Silicon；缺少依赖或 Metal 不可用时沿用原有 CPU / NVIDIA 后端。默认仍选择 CPU；明确选择 `mlx` 时不会悄悄退回 CPU。Intel Mac 不支持此后端。`shengmu doctor` 的 `mlx` 字段分别报告平台、依赖和 Metal 可用性；受限或无 GPU 的运行环境会给出提示。
+
+首次使用下载对应的 [MLX Whisper 模型](https://github.com/ml-explore/mlx-examples/tree/main/whisper)，CPU / CUDA 的 CTranslate2 权重不能复用。GUI 模型管理器随设备切换，MLX 托管权重位于模型根目录的 `managed/mlx/`；设置 `SHENGMU_MODEL_DIR` 时自动下载的共享缓存位于其 `mlx-hub/`。CLI 也可使用 `--model /path/to/mlx-model` 或 MLX Whisper 仓库标识，缓存完整后可离线使用。
+
+MLX 路径保留真实词时间戳、Silero VAD、识别提示和置信诊断；按最多 60 秒分块，优先在静音处切分，并恢复静音与音轨偏移。取消需等待当前模型下载或分块推理返回。跨块前文仅在勾选“使用前文上下文”时携带。MLX Whisper 0.4 使用贪心 / 温度回退解码，不支持原后端的束搜索和额外重复惩罚；“减少重复”方案保留阈值调整。VAD 预处理运行在 CPU，Whisper 推理与词对齐使用 Metal。MLX 依赖较大，`[all]` 不包含此可选项。
 
 ### OpenAI API
 

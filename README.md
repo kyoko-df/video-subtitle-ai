@@ -7,7 +7,7 @@ A Python project that can be developed and run directly: FFmpeg extracts the sel
 ## Implemented
 
 - Reads duration, audio track numbers, languages, channel counts, and start offsets via ffprobe; extracts 16 kHz mono PCM audio via FFmpeg.
-- Local Whisper model transcription with automatic language detection, CPU / NVIDIA CUDA, word-level timestamps, recognition prompts, and silence filtering; reuses the most recently used model.
+- Local Whisper transcription with automatic language detection, CPU / NVIDIA CUDA / Apple Silicon GPU (optional MLX), word-level timestamps, recognition prompts, and silence filtering; reuses the most recently used model.
 - Re-segments captions from word-level timestamps, preferring punctuation breaks; Chinese / Japanese lines are capped at 20 characters, other languages at 42, with at most 2 lines and 7 seconds per cue.
 - OpenAI `whisper-1` transcription requesting word-level and segment timestamps; long audio is chunked at up to 600 seconds, preferring silence within 5 seconds before the boundary, and the next chunk carries the previous text as a prompt.
 - Exports **SRT, WebVTT, ASS, TXT, JSON**; TXT is plain text, the rest keep timing.
@@ -174,7 +174,7 @@ shengmu transcribe "video.mp4" --engine local --model small --language zh \
 On a first local run, verify the flow with `tiny` or `base`, then pick `small` / `medium` / `large-v3` according to your accuracy needs. Local transcription speed and memory depend on the model and hardware.
 
 ```bash
-# Mac / generic CPU defaults to int8; no CUDA or MPS
+# Mac / generic CPU defaults to int8
 shengmu transcribe video.mp4 --model small --device cpu --compute-type int8
 
 # NVIDIA GPU; compatible CUDA / cuDNN must be configured separately
@@ -185,6 +185,22 @@ shengmu transcribe video.mp4 --model /path/to/model
 ```
 
 `SHENGMU_MODEL_DIR` sets the model cache directory. By default the model library's own cache location is used.
+
+### Apple Silicon Mac GPU
+
+Use native arm64 Python on an M-series Mac and install the optional GPU dependencies:
+
+```bash
+python -m pip install -e ".[all,mlx]"
+shengmu doctor
+shengmu transcribe video.mp4 --device mlx --model small --format srt json
+```
+
+Restart the GUI and select **Apple GPU · MLX** with Auto / FP16 / FP32 precision. Auto precision uses FP16 on MLX and INT8 on CPU. The device still defaults to CPU; `--device auto` prefers available MLX on Apple Silicon, otherwise keeps the original CPU / NVIDIA backend. Explicit `mlx` requests fail clearly when unsupported. Intel Macs are unsupported. The `mlx` field in `doctor` reports platform, dependency, and Metal availability without running inference.
+
+The [MLX Whisper backend](https://github.com/ml-explore/mlx-examples/tree/main/whisper) needs separate weights; CTranslate2 models cannot be reused. The model manager follows the selected device and keeps managed MLX weights under `managed/mlx/`. With `SHENGMU_MODEL_DIR`, automatic Hub downloads use its `mlx-hub/` cache. The CLI also accepts an MLX model directory or repository identifier; complete cached models work offline.
+
+Word timestamps, CPU-based Silero VAD, prompts, and diagnostics are retained. Metal handles Whisper inference and word alignment. Audio is processed in silence-aware chunks of at most 60 seconds, restoring removed silence and track offsets; cancellation waits for the current download / inference call. Context crosses chunks only when enabled. MLX Whisper 0.4 uses greedy / temperature-fallback decoding, with no beam search or extra repetition penalty; the less-repetition profile still adjusts thresholds. `[all]` does not include the larger optional MLX dependencies.
 
 ### OpenAI API
 

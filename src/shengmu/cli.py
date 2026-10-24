@@ -68,8 +68,10 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--model", default="small", help="本地 Whisper 模型名或模型目录")
     run.add_argument("--language", default=None, help="语言代码，例如 zh/en；省略时自动检测")
     run.add_argument("--track", type=int, default=None, help="ffprobe 音轨流编号；默认第一条音轨")
-    run.add_argument("--device", choices=("cpu", "cuda", "auto"), default="cpu")
-    run.add_argument("--compute-type", default="int8", help="本地模型计算精度，例如 int8/float16")
+    run.add_argument("--device", choices=("cpu", "cuda", "mlx", "auto"), default="cpu")
+    run.add_argument(
+        "--compute-type", default="auto", help="计算精度；CPU 自动使用 int8，Mac GPU 使用 float16"
+    )
     run.add_argument("--prompt", default="", help="人名、专有名词等识别提示")
     run.add_argument(
         "--condition-on-previous-text",

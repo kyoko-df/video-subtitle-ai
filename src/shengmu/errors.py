@@ -51,6 +51,6 @@ def local_model_error(exc, *, downloading=False) -> SubtitleError:
         message = (
             "请检查模型下载源、缓存路径和服务日志。"
             if downloading
-            else "本地模型转写失败。请检查模型文件、设备和计算精度；Mac 建议 cpu / int8。"
+            else "本地模型转写失败。请检查模型文件、设备和计算精度；Mac GPU 需 MLX 格式权重及 float16 / float32，CPU 可用 int8。"
         )
     return SubtitleError(message)

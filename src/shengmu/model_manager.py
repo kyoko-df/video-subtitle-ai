@@ -9,6 +9,17 @@ from .models import SubtitleError
 MODELS = ("tiny", "base", "small", "medium", "large-v3", "turbo")
 REPOS = {name: "Systran/faster-whisper-" + name for name in MODELS}
 REPOS["turbo"] = "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
+MLX_REPOS = {name: "mlx-community/whisper-" + name + "-mlx" for name in MODELS}
+MLX_REPOS["turbo"] = "mlx-community/whisper-large-v3-turbo"
+MLX_FILES = ["config.json", "weights.npz", "weights.safetensors"]
+
+
+def repositories(backend):
+    if backend == "mlx":
+        return MLX_REPOS
+    if backend == "faster-whisper":
+        return REPOS
+    raise SubtitleError("不支持的本地转写后端。")
 
 
 def model_root(workspace):
@@ -18,30 +29,48 @@ def model_root(workspace):
     )
 
 
-def model_path(root, name):
+def model_path(root, name, backend="faster-whisper"):
+    repositories(backend)
     if name not in MODELS:
         raise SubtitleError("不支持的模型。")
-    return root / name
+    return root / "mlx" / name if backend == "mlx" else root / name
 
 
-def model_inventory(root):
+def model_complete(path, backend="faster-whisper"):
+    if backend == "mlx":
+        weights = any((path / file).is_file() for file in ("weights.npz", "weights.safetensors"))
+    else:
+        weights = (path / "model.bin").is_file() and (
+            (path / "tokenizer.json").is_file() or any(path.glob("vocabulary.*"))
+        )
+    return weights and (path / "config.json").is_file()
+
+
+def model_inventory(root, backend="faster-whisper"):
     results = []
     for name in MODELS:
-        path = model_path(root, name)
-        downloaded = (
-            (path / "model.bin").is_file()
-            and (path / "config.json").is_file()
-            and ((path / "tokenizer.json").is_file() or any(path.glob("vocabulary.*")))
-            and (path / ".complete").is_file()
-        )
+        path = model_path(root, name, backend)
+        downloaded = model_complete(path, backend) and (path / ".complete").is_file()
         cached = None
         if not downloaded:
             try:
-                from faster_whisper.utils import download_model
+                if backend == "mlx":
+                    from huggingface_hub import snapshot_download
 
-                cached = download_model(
-                    name, local_files_only=True, cache_dir=os.environ.get("SHENGMU_MODEL_DIR")
-                )
+                    cached = snapshot_download(
+                        repo_id=MLX_REPOS[name],
+                        local_files_only=True,
+                        cache_dir=mlx_cache_dir(),
+                        allow_patterns=MLX_FILES,
+                    )
+                    if not model_complete(Path(cached), "mlx"):
+                        cached = None
+                else:
+                    from faster_whisper.utils import download_model
+
+                    cached = download_model(
+                        name, local_files_only=True, cache_dir=os.environ.get("SHENGMU_MODEL_DIR")
+                    )
             except (ImportError, OSError, ValueError):
                 pass
         size = sum(p.stat().st_size for p in path.rglob("*") if p.is_file()) if path.exists() else 0
@@ -50,6 +79,7 @@ def model_inventory(root):
         results.append(
             {
                 "name": name,
+                "backend": backend,
                 "downloaded": downloaded or cached is not None,
                 "managed": downloaded,
                 "size": size,
@@ -59,23 +89,35 @@ def model_inventory(root):
     return results
 
 
-def download(root, name, update, cancel=None):
+def mlx_cache_dir():
+    directory = os.environ.get("SHENGMU_MODEL_DIR")
+    return str(Path(directory).expanduser().resolve() / "mlx-hub") if directory else None
+
+
+def download(root, name, update, cancel=None, backend="faster-whisper"):
     from .media import check_cancel
 
     try:
         from huggingface_hub import HfApi, hf_hub_download
     except ImportError as exc:
-        raise SubtitleError('请先安装本地引擎依赖：pip install -e ".[local]"。') from exc
-    path = model_path(root, name)
+        raise SubtitleError(
+            '请先安装本地引擎依赖：pip install -e ".[local]" 或 ".[mlx]"。'
+        ) from exc
+    path = model_path(root, name, backend)
+    repo = repositories(backend)[name]
     check_cancel(cancel)
     try:
-        info = HfApi().model_info(REPOS[name], files_metadata=True)
+        info = HfApi().model_info(repo, files_metadata=True)
         files = [
             f
             for f in info.siblings
-            if f.rfilename
-            in {"config.json", "preprocessor_config.json", "model.bin", "tokenizer.json"}
-            or f.rfilename.startswith("vocabulary.")
+            if (
+                f.rfilename in MLX_FILES
+                if backend == "mlx"
+                else f.rfilename
+                in {"config.json", "preprocessor_config.json", "model.bin", "tokenizer.json"}
+                or f.rfilename.startswith("vocabulary.")
+            )
         ]
         total = sum(f.size or 0 for f in files)
         path.mkdir(parents=True, exist_ok=True)
@@ -83,10 +125,12 @@ def download(root, name, update, cancel=None):
         done = 0
         for f in files:
             check_cancel(cancel)
-            hf_hub_download(REPOS[name], f.rfilename, revision=info.sha, local_dir=path)
+            hf_hub_download(repo, f.rfilename, revision=info.sha, local_dir=path)
             done += f.size or 0
             update(done, total, f"已下载 {f.rfilename}")
         check_cancel(cancel)
+        if not model_complete(path, backend):
+            raise SubtitleError("模型仓库缺少当前后端需要的配置或权重文件。")
         (path / ".complete").write_text(info.sha or "complete", encoding="utf-8")
         update(total, total, "模型下载完成")
     except SubtitleError:

@@ -131,8 +131,9 @@
             <div class="field-pair">
               <label class="field"
                 >计算设备<select id="device">
-                  <option value="cpu">CPU</option>
+                  <option value="cpu" selected>CPU</option>
                   <option value="cuda">NVIDIA GPU</option>
+                  <option value="mlx">Apple GPU · MLX</option>
                   <option value="auto">自动</option>
                 </select></label
               ><label class="field"
@@ -141,7 +142,7 @@
                   <option value="float32">FP32</option>
                   <option value="float16">FP16</option>
                   <option value="int8_float16">INT8 / FP16</option>
-                  <option value="auto">自动</option>
+                  <option value="auto" selected>自动</option>
                 </select></label
               >
             </div>
