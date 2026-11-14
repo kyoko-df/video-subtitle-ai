@@ -399,10 +399,11 @@ def test_cli_bad_completed_cache_falls_back_to_finished_chunks(
     assert json.loads(capsys.readouterr().out)["transcription"]["restored_chunks"] == 3
 
 
+@pytest.mark.parametrize("old_compute_type", ["auto", "int8"])
 def test_cli_imports_previous_completed_asr_cache_without_rewriting_original(
-    recording, tmp_path, monkeypatch, capsys
+    recording, tmp_path, monkeypatch, capsys, old_compute_type
 ):
-    config = EngineOptions()
+    config = EngineOptions(compute_type=old_compute_type)
     old_options = asdict(config)
     for key in ("asr_chunk_seconds", "resume", "checkpoint_dir", "detected_language", "context"):
         old_options.pop(key)

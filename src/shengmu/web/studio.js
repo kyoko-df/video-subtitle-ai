@@ -193,8 +193,10 @@ function applySettings(settings = {}) {
     if (settings[key] !== undefined) $(key).value = settings[key] ?? "";
   if (settings.compute_type) $("compute").value = settings.compute_type;
   if (settings.asr_profile) $("asr-profile").value = settings.asr_profile;
-  $("asr-chunk-seconds").value = settings.asr_chunk_seconds ?? 60;
-  $("asr-resume").checked = settings.resume ?? true;
+  if (settings.asr_chunk_seconds !== undefined)
+    $("asr-chunk-seconds").value = settings.asr_chunk_seconds;
+  if (settings.resume !== undefined)
+    $("asr-resume").checked = settings.resume;
   for (const key of asrFields)
     if (settings[key] !== undefined)
       $(key.replaceAll("_", "-")).value = settings[key] ?? "";

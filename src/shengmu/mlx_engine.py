@@ -5,7 +5,7 @@ import os
 import sys
 import wave
 from dataclasses import replace
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 
 from .captions import is_hallucination, mark_suspicions, repetitive_text, split_caption
@@ -31,7 +31,7 @@ def resolve_model(name):
                 "请选择 MLX Whisper 模型目录；faster-whisper / CTranslate2 权重不能用于 Mac GPU。"
             )
         return str(path.resolve())
-    if name.startswith(("/", "~", ".")):
+    if path.is_absolute() or PureWindowsPath(name).drive or name.startswith(("/", "~", ".", "\\")):
         raise SubtitleError("MLX 模型目录不存在，请检查 --model 路径。")
     if name in MLX_REPOS and os.environ.get("SHENGMU_MODEL_DIR"):
         managed = model_path(model_root(Path.cwd()), name, "mlx")

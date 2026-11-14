@@ -394,18 +394,13 @@ def main(argv: list[str] | None = None) -> int:
                     "context",
                 ):
                     legacy_options.pop(key, None)
-                legacy_signature = hashlib.sha256(
-                    json.dumps(
-                        [
-                            str(source),
-                            state.st_size,
-                            state.st_mtime_ns,
-                            legacy_options,
-                            args.track,
-                        ],
-                        sort_keys=True,
-                    ).encode()
-                ).hexdigest()
+                legacy_candidates = [legacy_options]
+                if (
+                    options.engine == "local"
+                    and options.device == "cpu"
+                    and options.compute_type == "auto"
+                ):
+                    legacy_candidates.append({**legacy_options, "compute_type": "int8"})
                 signature = transcription_fingerprint(source, options, args.track)
                 cache = checkpoint_directory(args.checkpoint_dir) / (signature + ".source.json")
                 ensure_output_directory(cache.parent, overwrite=True)
@@ -413,13 +408,26 @@ def main(argv: list[str] | None = None) -> int:
                     cache, args.output_dir / ".translation-cache" / cache.name, args.resume
                 )
                 if args.asr_chunk_seconds == 60:
-                    for old in (
-                        cache.parent / (legacy_signature + ".source.json"),
-                        args.output_dir
-                        / ".translation-cache"
-                        / (legacy_signature + ".source.json"),
-                    ):
-                        restore_legacy_cache(cache, old, args.resume)
+                    for candidate in legacy_candidates:
+                        legacy_signature = hashlib.sha256(
+                            json.dumps(
+                                [
+                                    str(source),
+                                    state.st_size,
+                                    state.st_mtime_ns,
+                                    candidate,
+                                    args.track,
+                                ],
+                                sort_keys=True,
+                            ).encode()
+                        ).hexdigest()
+                        for old in (
+                            cache.parent / (legacy_signature + ".source.json"),
+                            args.output_dir
+                            / ".translation-cache"
+                            / (legacy_signature + ".source.json"),
+                        ):
+                            restore_legacy_cache(cache, old, args.resume)
                 restored = load_completed_asr(cache, options, progress) if args.resume else None
                 if restored is not None:
                     transcript, legacy_transcript = restored

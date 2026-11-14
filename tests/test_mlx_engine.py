@@ -288,6 +288,19 @@ def test_mlx_model_downloads_are_pinned_and_isolated_from_cpu(tmp_path, monkeypa
         resolve_model(str(tmp_path / "missing"))
 
 
+@pytest.mark.parametrize(
+    "name",
+    [r"C:\missing\model", r"Z:missing\model", r"\\server\share\missing", r"\missing\model"],
+)
+def test_missing_windows_model_paths_are_not_downloaded(name, monkeypatch):
+    hub = pytest.importorskip("huggingface_hub")
+    monkeypatch.setattr(
+        hub, "snapshot_download", lambda **kwargs: pytest.fail("local paths must not be downloaded")
+    )
+    with pytest.raises(SubtitleError, match="不存在"):
+        resolve_model(name)
+
+
 def test_metal_probe_survives_failed_native_runtime_and_caches_result(monkeypatch):
     calls = []
 

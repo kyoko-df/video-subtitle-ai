@@ -31,7 +31,8 @@
 
 ```bash
 # macOS
-brew install ffmpeg
+brew install ffmpeg-full
+export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"
 
 # Debian / Ubuntu
 sudo apt-get update
@@ -332,7 +333,7 @@ python -m pip install -e ".[all,dev]"
 pytest -q --cov=shengmu --cov-report=term-missing --cov-fail-under=80 -W error
 ruff check .
 ruff format --check .
-node --test tests/test_editor.cjs
+node --test tests/test_editor.cjs tests/test_studio_settings.cjs
 node --check src/shengmu/web/app.js
 node --check src/shengmu/web/editor.js
 node --check src/shengmu/web/studio.js
