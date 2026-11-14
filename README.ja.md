@@ -186,6 +186,22 @@ shengmu transcribe video.mp4 --model /path/to/model
 
 `SHENGMU_MODEL_DIR` でモデルキャッシュのディレクトリを指定できます。既定ではモデルライブラリ自身のキャッシュ位置を使います。
 
+### 文字起こしの中断再開
+
+CLI と GUI は CPU / CUDA / MLX / OpenAI の各バックエンドで、完了したチャンクを保存します。既定は最大 60 秒で、近くに無音があれば境界を調整します。失敗、キャンセル、サービス再起動の後は同じコマンドまたは履歴の「继续转写」で再開し、「从头重试」で最初から処理できます。
+
+```bash
+shengmu transcribe video.mp4 --asr-chunk-seconds 60 --format srt json
+shengmu transcribe video.mp4 --output-dir recovered --format srt json
+shengmu transcribe video.mp4 --no-resume --output-dir fresh
+```
+
+`--asr-chunk-seconds` は 30–600 秒です。`--chunk-seconds` は従来どおり OpenAI の個別リクエスト上限を設定します。`--resume` / `--no-resume` / `--checkpoint-dir` は文字起こしと翻訳の両方に適用します。CLI のキャッシュはユーザーのチェックポイントディレクトリ内の `asr/`、GUI は各プロジェクトの `.asr-cache/` に保存し、タスク削除時に消去します。字幕、単語時刻、診断情報を保存し、音声のコピーや API キーは保存しません。
+
+ソースのパス・サイズ・更新日時、音声トラック、モデル、バックエンド、認識設定、チャンク長の変更はキャッシュを分離します。同じリモートモデル名の重みを差し替えた場合は `--no-resume` を指定してください。破損チャンク以降を再処理し、それ以前の有効な結果を保持します。同じチェックポイントへの並行書き込みは拒否します。旧版の翻訳フローの完了済み ASR キャッシュも元ファイルを変更せず読み込めます。
+
+再開時も一時音声を再抽出します。話者識別は全チャンクの後に実行し、中断時はこの手順を再実行します。キャンセルは現在の処理の完了を待ち、未保存のチャンクを再処理します。連続発話の境界は校正してください。全工程が成功するまで字幕をエクスポートしません。JSON の `asr_stats`、CLI 結果の `transcription`、GUI タスク状態の `asr_stats` に完了・再利用チャンク数と秒数を返します。
+
 ### Apple Silicon Mac GPU
 
 M シリーズ Mac とネイティブ arm64 Python で、GPU 用の追加依存関係をインストールします。

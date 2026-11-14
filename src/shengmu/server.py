@@ -91,6 +91,8 @@ class JobRequest(ExportSettings):
     diarize: bool = False
     num_speakers: int | None = Field(default=None, ge=1, le=20)
     chunk_seconds: int = Field(default=600, ge=30, le=600)
+    asr_chunk_seconds: int = Field(default=60, ge=30, le=600)
+    resume: bool = True
     formats: list[Literal["srt", "vtt", "ass", "txt", "json"]] = Field(
         default_factory=lambda: ["srt"]
     )
@@ -243,6 +245,7 @@ class Job:
             "revision": self.revision,
             "request": self.request.model_dump(),
             "operation": self.operation,
+            "asr_stats": self.transcript.metadata.get("asr_stats") if self.transcript else None,
             "draft": (self.directory / "draft.json").is_file(),
             "videos": [
                 {"mode": mode, "url": f"/api/jobs/{self.id}/video/{mode}"}
@@ -555,6 +558,9 @@ class Workspace:
                     captions=CaptionOptions(**r.captions.model_dump()),
                     diarize=r.diarize,
                     num_speakers=r.num_speakers,
+                    asr_chunk_seconds=r.asr_chunk_seconds,
+                    resume=r.resume,
+                    checkpoint_dir=job.directory / ".asr-cache",
                 ),
                 r.track,
                 update,
@@ -995,7 +1001,7 @@ def create_app(
             return {"saved": True, "revision": job.revision}
 
     @app.post("/api/jobs/{job_id}/retry", status_code=202)
-    def retry_job(job_id: str):
+    def retry_job(job_id: str, resume: bool | None = None):
         workspace = app.state.workspace
         with workspace.lock:
             job = workspace.get_job(job_id)
@@ -1005,6 +1011,8 @@ def create_app(
                 raise HTTPException(409, "源文件已释放，无法重试。")
             if sum(j.status not in TERMINAL for j in workspace.jobs.values()) >= 5:
                 raise HTTPException(429, "最多允许 5 个任务等待或处理。")
+            if resume is not None:
+                job.request = job.request.model_copy(update={"resume": resume})
             job.cancel = threading.Event()
             job.operation = {}
             job.status, job.progress, job.message = "queued", 0, "等待重试…"

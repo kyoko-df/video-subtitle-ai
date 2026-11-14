@@ -186,6 +186,23 @@ shengmu transcribe video.mp4 --model /path/to/model
 
 `SHENGMU_MODEL_DIR` sets the model cache directory. By default the model library's own cache location is used.
 
+### Resumable transcription
+
+CLI and GUI transcription now save a checkpoint after each complete chunk on CPU, CUDA, MLX, and OpenAI. Chunks default to at most 60 seconds and prefer nearby silence. After failure, cancellation, or a service restart, repeat the command or choose “继续转写” in task history; “从头重试” starts over.
+
+```bash
+shengmu transcribe video.mp4 --asr-chunk-seconds 60 --format srt json
+# Resume, including when changing the output directory
+shengmu transcribe video.mp4 --output-dir recovered --format srt json
+shengmu transcribe video.mp4 --no-resume --output-dir fresh
+```
+
+`--asr-chunk-seconds` accepts 30–600 seconds; `--chunk-seconds` still limits individual OpenAI requests. `--resume`, `--no-resume`, and `--checkpoint-dir` apply to both transcription and translation. CLI chunk checkpoints live under the user checkpoint directory's `asr/`, also configurable with `SHENGMU_CHECKPOINT_DIR`. GUI checkpoints live in each project's `.asr-cache/` and are deleted with the task. They contain subtitle text, word timings, and diagnostics, without audio copies or API keys.
+
+Source path / size / modification time, track, model, backend, recognition settings, and chunk size isolate checkpoints. Use `--no-resume` if weights behind the same remote model identifier change. A damaged chunk invalidates its suffix, retaining the validated prefix; concurrent writers to one checkpoint are rejected. Older completed ASR caches from the combined translation workflow remain readable without modifying the originals.
+
+Resuming still extracts temporary audio again. Optional diarization runs after all chunks and is rerun when interrupted. Cancellation waits for the current load / request / inference call; the unfinished chunk is repeated. Review continuous speech around chunk boundaries. Files are exported only after the full workflow succeeds. JSON metadata includes `asr_stats`; CLI output uses `transcription`, and GUI job status also exposes `asr_stats`, with completed / restored chunk counts and seconds.
+
 ### Apple Silicon Mac GPU
 
 Use native arm64 Python on an M-series Mac and install the optional GPU dependencies:

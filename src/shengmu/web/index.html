@@ -167,6 +167,13 @@
           >
           <details>
             <summary>识别提示与质量选项</summary>
+            <label class="quality-option"
+              ><input id="asr-resume" type="checkbox" checked />恢复已完成的转写分块</label
+            >
+            <label class="field"
+              >转写分块 / 秒<input id="asr-chunk-seconds" type="number" min="30" max="600" step="1" value="60"
+            /></label>
+            <p class="muted">每块完成后保存进度。中断后可在任务列表继续，或选择从头重试。</p>
             <label class="field"
               >识别方案<select id="asr-profile">
                 <option value="standard">标准</option>

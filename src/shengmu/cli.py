@@ -11,6 +11,7 @@ from pathlib import Path
 from threading import Timer
 
 from . import __version__
+from .asr_checkpoints import transcription_fingerprint
 from .cache import (
     checkpoint_directory,
     preserve_json_times,
@@ -18,6 +19,7 @@ from .cache import (
     restore_translation_cache,
 )
 from .captions import mark_suspicions
+from .devices import local_backend
 from .diagnostics import doctor, ensure_output_directory, redacted_traceback
 from .engines import EngineOptions
 from .exporters import FORMATS, export_files, preflight_output
@@ -47,7 +49,7 @@ def translation_arguments(command, prefix=""):
         "--resume",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="恢复相同字幕 / 翻译设置的已完成结果；--no-resume 重新处理",
+        help="恢复相同设置的转写分块 / 翻译结果；--no-resume 从头重新处理",
     )
     command.add_argument(
         "--checkpoint-dir",
@@ -93,6 +95,9 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--no-speech-threshold", type=float, default=None)
     run.add_argument("--vad-threshold", type=float, default=None)
     run.add_argument("--chunk-seconds", type=int, default=600, help="API 分块长度，30–600 秒")
+    run.add_argument(
+        "--asr-chunk-seconds", type=int, default=60, help="转写检查点分块长度，30–600 秒，默认 60"
+    )
     run.add_argument("--translate-to", dest="translation_target", help="转写后继续翻译，例如 zh")
     translation_arguments(run, "translation-")
     run.add_argument("--export-mode", choices=("original", "translated", "bilingual"), default=None)
@@ -252,6 +257,32 @@ class ProgressPrinter:
         self.last, self.last_time = event, now
 
 
+def load_completed_asr(cache, options, progress):
+    if not cache.is_file():
+        return None
+    try:
+        data = json.loads(cache.read_text(encoding="utf-8"))
+        transcript = Transcript.from_dict(data)
+        backend = local_backend(options.device) if options.engine == "local" else "openai"
+        if transcript.metadata.get("asr_backend") not in (None, backend):
+            return None
+        legacy = preserve_json_times(transcript, data)
+        metadata = {**transcript.metadata}
+        stats = metadata.get("asr_stats")
+        if isinstance(stats, dict) and {"completed_chunks", "completed_seconds"} <= stats.keys():
+            metadata["asr_stats"] = {
+                **stats,
+                "restored_chunks": stats["completed_chunks"],
+                "restored_seconds": stats["completed_seconds"],
+            }
+        return replace(
+            transcript, segments=mark_suspicions(transcript.segments), metadata=metadata
+        ), legacy
+    except (SubtitleError, ValueError, TypeError, KeyError, UnicodeError):
+        progress("transcribe", 0, "完整转写缓存损坏，将尝试恢复分块检查点…")
+        return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
@@ -336,7 +367,11 @@ def main(argv: list[str] | None = None) -> int:
                 log_prob_threshold=args.log_prob_threshold,
                 no_speech_threshold=args.no_speech_threshold,
                 vad_threshold=args.vad_threshold,
+                asr_chunk_seconds=args.asr_chunk_seconds,
+                resume=args.resume,
+                checkpoint_dir=checkpoint_directory(args.checkpoint_dir),
             )
+            options.validate()
             if args.translation_target:
                 if not args.translation_model:
                     raise SubtitleError("转写后翻译需要 --translation-model 指定文字模型。")
@@ -350,28 +385,44 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 source = args.input.expanduser().resolve()
                 state = source.stat()
-                signature = hashlib.sha256(
+                legacy_options = asdict(options)
+                for key in (
+                    "asr_chunk_seconds",
+                    "resume",
+                    "checkpoint_dir",
+                    "detected_language",
+                    "context",
+                ):
+                    legacy_options.pop(key, None)
+                legacy_signature = hashlib.sha256(
                     json.dumps(
                         [
                             str(source),
                             state.st_size,
                             state.st_mtime_ns,
-                            asdict(options),
+                            legacy_options,
                             args.track,
                         ],
                         sort_keys=True,
                     ).encode()
                 ).hexdigest()
+                signature = transcription_fingerprint(source, options, args.track)
                 cache = checkpoint_directory(args.checkpoint_dir) / (signature + ".source.json")
                 ensure_output_directory(cache.parent, overwrite=True)
                 restore_legacy_cache(
                     cache, args.output_dir / ".translation-cache" / cache.name, args.resume
                 )
-                if args.resume and cache.is_file():
-                    data = json.loads(cache.read_text(encoding="utf-8"))
-                    transcript = Transcript.from_dict(data)
-                    legacy_transcript = preserve_json_times(transcript, data)
-                    transcript = replace(transcript, segments=mark_suspicions(transcript.segments))
+                if args.asr_chunk_seconds == 60:
+                    for old in (
+                        cache.parent / (legacy_signature + ".source.json"),
+                        args.output_dir
+                        / ".translation-cache"
+                        / (legacy_signature + ".source.json"),
+                    ):
+                        restore_legacy_cache(cache, old, args.resume)
+                restored = load_completed_asr(cache, options, progress) if args.resume else None
+                if restored is not None:
+                    transcript, legacy_transcript = restored
                     progress("transcribe", 1, "已恢复上次完成的转写，继续翻译…")
                 else:
                     transcript = transcribe(args.input, options, args.track, progress)
@@ -407,13 +458,14 @@ def main(argv: list[str] | None = None) -> int:
                         "language": transcript.language,
                         "files": [str(path) for path in paths],
                         "translation": transcript.metadata.get("translation_stats"),
+                        "transcription": transcript.metadata.get("asr_stats"),
                     },
                     ensure_ascii=False,
                 )
             )
         return 0
     except KeyboardInterrupt:
-        print("任务已取消，已保存的翻译检查点可续跑。", file=sys.stderr)
+        print("任务已取消，已保存的转写 / 翻译检查点可续跑。", file=sys.stderr)
         return 130
     except (SubtitleError, OSError, ValueError) as exc:
         print(f"错误：{exc}", file=sys.stderr)

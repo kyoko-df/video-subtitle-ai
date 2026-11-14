@@ -158,6 +158,8 @@ function jobSettings() {
     condition_on_previous_text: $("previous-text").checked,
     filter_hallucinations: $("filter-hallucinations").checked,
     asr_profile: $("asr-profile").value,
+    asr_chunk_seconds: Number($("asr-chunk-seconds").value),
+    resume: $("asr-resume").checked,
     ...Object.fromEntries(
       asrFields.map((key) => [
         key,
@@ -191,6 +193,8 @@ function applySettings(settings = {}) {
     if (settings[key] !== undefined) $(key).value = settings[key] ?? "";
   if (settings.compute_type) $("compute").value = settings.compute_type;
   if (settings.asr_profile) $("asr-profile").value = settings.asr_profile;
+  $("asr-chunk-seconds").value = settings.asr_chunk_seconds ?? 60;
+  $("asr-resume").checked = settings.resume ?? true;
   for (const key of asrFields)
     if (settings[key] !== undefined)
       $(key.replaceAll("_", "-")).value = settings[key] ?? "";
@@ -518,13 +522,17 @@ async function refreshHistory() {
       if (["error", "cancelled"].includes(job.status))
         row.append(
           makeButton(
-            "重试",
+            "继续转写",
             async () => {
-              await api(`/api/jobs/${job.id}/retry`, { method: "POST" });
+              await api(`/api/jobs/${job.id}/retry?resume=true`, { method: "POST" });
               await refreshHistory();
             },
             !job.media_available,
           ),
+          makeButton("从头重试", async () => {
+            await api(`/api/jobs/${job.id}/retry?resume=false`, { method: "POST" });
+            await refreshHistory();
+          }, !job.media_available),
         );
       if (!terminal.has(job.status))
         row.append(

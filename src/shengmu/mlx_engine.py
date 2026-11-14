@@ -108,7 +108,7 @@ class MLXEngine:
                 parameters = options.decoding_parameters()
                 with wave.open(str(audio), "rb") as stream:
                     total = stream.getnframes() / stream.getframerate()
-                result, language, context = [], options.language, ""
+                result, language, context = [], options.language or options.detected_language, ""
                 # Bound waveform / mel memory, report real progress and check cancellation.
                 # Silence-aware boundaries retain all input samples before VAD.
                 for chunk, offset, duration in wav_chunks(audio, min(options.chunk_seconds, 60)):

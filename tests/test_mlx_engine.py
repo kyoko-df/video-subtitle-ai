@@ -146,6 +146,29 @@ def test_mlx_routes_local_and_auto_preserves_words_silence_offsets_and_options(m
     assert len(r.calls) == 4
 
 
+def test_mlx_pipeline_resumes_outer_chunks_without_losing_vad_offsets(mlx_runtime, tmp_path):
+    from shengmu.pipeline import transcribe
+
+    runtime, cancel = mlx_runtime, Event()
+    config = EngineOptions(
+        device="mlx", model="tiny", asr_chunk_seconds=30, checkpoint_dir=tmp_path / "cache"
+    )
+
+    def interrupted(stage, amount, message):
+        if message.startswith("已保存转写检查点"):
+            cancel.set()
+
+    with pytest.raises(Cancelled):
+        transcribe(runtime.audio, config, progress=interrupted, cancel=cancel)
+    assert len(runtime.calls) == 1
+    result = transcribe(runtime.audio, config)
+    assert len(runtime.calls) == 3
+    assert result.metadata["asr_stats"]["restored_chunks"] == 1
+    assert result.metadata["asr_stats"]["restored_seconds"] == 30
+    starts = [cue.words[0].start for cue in result.segments]
+    assert {1.1, 4.1, 31.1, 34.1, 61.1, 64.1} <= set(starts)
+
+
 def test_mlx_precision_invalidates_vendor_cache_and_cpu_switch_releases_it(
     mlx_runtime, monkeypatch
 ):

@@ -49,7 +49,7 @@ def atomic_json(path: Path, data):
 
 
 @contextmanager
-def workspace_lock(root):
+def workspace_lock(root, message="该项目目录已有声幕服务在运行，请使用另一端口和项目目录。"):
     """Keep two server processes from independently editing the same manifests."""
     root.mkdir(parents=True, exist_ok=True)
     with (root / ".lock").open("a+b") as stream:
@@ -67,7 +67,7 @@ def workspace_lock(root):
 
                 fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
-            raise SubtitleError("该项目目录已有声幕服务在运行，请使用另一端口和项目目录。") from exc
+            raise SubtitleError(message) from exc
         try:
             yield
         finally:

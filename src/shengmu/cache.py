@@ -22,7 +22,11 @@ def checkpoint_directory(explicit=None) -> Path:
 def restore_legacy_cache(path: Path, legacy: Path, resume: bool):
     """Copy a previously selected output directory's cache without deleting the original."""
     if resume and not path.exists() and legacy.is_file() and path.resolve() != legacy.resolve():
-        atomic_json(path, json.loads(legacy.read_text(encoding="utf-8")))
+        try:
+            data = json.loads(legacy.read_text(encoding="utf-8"))
+        except (ValueError, UnicodeError):
+            return
+        atomic_json(path, data)
 
 
 def preserve_json_times(transcript, data):
