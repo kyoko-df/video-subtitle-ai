@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
+from .devices import mlx_status
 from .models import SubtitleError
 from .storage import copy_exclusive
 
@@ -127,11 +128,13 @@ def doctor(network=False, output_dir: Path | None = None) -> dict:
             capabilities = ffmpeg_capabilities(executable, os.stat(executable).st_mtime_ns)
         except OSError:
             pass
+    mlx = mlx_status()
     result = {
         "python": sys.version.split()[0],
         "ffmpeg": executable,
         "ffprobe": shutil.which(os.environ.get("FFPROBE_BINARY", "ffprobe")),
         "local_engine_installed": importlib.util.find_spec("faster_whisper") is not None,
+        "mlx": mlx,
         "openai_engine_installed": importlib.util.find_spec("openai") is not None,
         "openai_key_configured": bool(os.environ.get("OPENAI_API_KEY", "").strip()),
         "ffmpeg_capabilities": capabilities,

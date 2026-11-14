@@ -7,7 +7,7 @@
 ## 已实现
 
 - 通过 ffprobe 读取时长、音轨编号、语言、声道和起始偏移；通过 FFmpeg 提取 16 kHz 单声道 PCM 音频。
-- 本地 Whisper 模型转写，支持自动识别语言、CPU / NVIDIA CUDA、词级时间戳、识别提示及静音过滤；复用最近使用的一个模型。
+- 本地 Whisper 模型转写，支持自动识别语言、CPU / NVIDIA CUDA / Apple Silicon GPU（可选 MLX）、词级时间戳、识别提示及静音过滤；复用最近使用的一个模型。
 - 按词级时间戳重新切分字幕，优先在标点处断开；中文 / 日文每行最多 20 字符，其他语言每行最多 42 字符，每条最多 2 行、7 秒。
 - OpenAI `whisper-1` 转写，请求词级和片段时间戳；长音频按最多 600 秒分块，优先在边界前 5 秒内的静音处切分，下一块携带前文提示。
 - 导出 **SRT、WebVTT、ASS、TXT、JSON**；TXT 为纯文本，其余保留时间信息。
@@ -17,6 +17,7 @@
 - 可选 OpenAI / 本机 LM Studio 文本翻译与本地 pyannote 说话人识别；模型下载、进度、管理和常用配置。
 - CLI 支持转写、翻译、一步双语导出、查看音轨、JSON 格式转换和环境检查；拒绝意外覆盖输出或输入文件。
 - 长视频翻译支持逐批检查点、恢复、有限重试、递归拆批和并发 1 / 2；工作台可配置超时、输出上限与模型支持的思考模式。
+- 转写支持 CPU / CUDA / MLX / OpenAI 分块检查点；失败、取消或服务重启后恢复已完成分块，保留词时间、自动识别语言及跨块前文。
 - ASR 提供减少重复 / 轻声方案与高级阈值；疑似重复循环先标记，支持试听、批量删除和撤销。
 - GUI 仅监听本机地址；API Key 从服务器环境变量读取，前端不会收到 Key。
 
@@ -30,7 +31,8 @@
 
 ```bash
 # macOS
-brew install ffmpeg
+brew install ffmpeg-full
+export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"
 
 # Debian / Ubuntu
 sudo apt-get update
@@ -80,7 +82,7 @@ shengmu gui --port 9000 --no-browser
 
 GUI 是运行在本机的浏览器应用，普通上传保存到本机项目目录；也可直接读取已连接的 SMB / 本地视频。本地模式不会上传音频到 AI 服务。单个上传文件上限为 2 GB，更大的视频可直接填写路径或使用 CLI。模型首次下载需要网络，下载后可离线使用。浏览器不支持某个视频编码时仍能转写，但无法在 GUI 中播放该视频。
 
-GUI 默认把项目、上传源文件、字幕和草稿保存在当前目录的 `.shengmu/workspace`，停止和重启服务后仍可从任务列表继续校对。用 `shengmu gui --workspace /path/to/projects` 或 `SHENGMU_WORKSPACE` 更改目录；同一项目目录只允许一个服务进程。处理中断的任务会标记为失败，可在任务列表重试。
+GUI 默认把项目、上传源文件、字幕和草稿保存在当前目录的 `.shengmu/workspace`，停止和重启服务后仍可从任务列表继续校对。用 `shengmu gui --workspace /path/to/projects` 或 `SHENGMU_WORKSPACE` 更改目录；同一项目目录只允许一个服务进程。处理中断的任务会标记为失败，在任务列表点击“继续转写”恢复已保存的分块；“从头重试”重新识别全部音频。
 
 最多保留 30 个源文件、100 个任务；上传源文件合计最多 4 GB，包含正在上传的文件。最多 5 个转写任务处理中或排队，处理串行运行。更换文件会保留旧项目；在“源文件缓存”中释放不用的源文件，或删除旧任务腾出任务名额。持久项目不会自动过期。释放源文件后保留已完成字幕，但无法播放、重试或导出视频；字幕、视频、模型和波形缓存另占磁盘空间。
 
@@ -106,7 +108,7 @@ GUI 模型只允许 `tiny`、`base`、`small`、`medium`、`large-v3` 和 `turbo
 - **排版与质检**：设置 CJK / 其他语言每行长度、最多行数、最短 / 最长秒数和每秒字数。质检对原文和译文提示过长、过短、阅读过快及重叠，点击提示定位。重新排版沿用词时间切分；重新切开的字幕会清除译文，需要重新翻译。
 - **样式与视频**：字体、字号、颜色、位置和边距用于预览、ASS 和烧录。导出内容可选原文 / 译文 / 双语，可显示说话人名称。烧录视频编码为 H.264 / AAC；封装字幕轨复制原视频编码、转换音频为 AAC，字幕为 MP4 mov_text。源视频编码若无法封装到 MP4，会给出 FFmpeg 错误，可改用烧录。两种方式保留原媒体全部音轨，长视频导出可取消。
 - **逐词高亮**：保存真实词时间戳；缺失对齐时使用带 `estimated=true` 标记的估算时间。原文预览与 ASS / 烧录支持逐词高亮；译文不伪造词级对齐。手动改文后高亮会退回整句，重新识别可恢复。
-- **模型**：展示模型是否可用、磁盘大小及下载进度。下载固定官方 / 已知 CTranslate2 仓库的指定版本，并可续传。管理器可删除其下载的模型；已有共享 Hugging Face 缓存只显示为可用，避免删除其他程序共享的模型。使用中的本地模型禁止删除。保存常用配置后下次启动自动加载。
+- **模型**：展示模型是否可用、磁盘大小及下载进度。根据计算设备分别管理 CTranslate2 / MLX 模型，下载已知仓库的指定版本，并可续传。管理器可删除其下载的模型；已有共享 Hugging Face 缓存只显示为可用，避免删除其他程序共享的模型。使用中的本地模型禁止删除。保存常用配置后下次启动自动加载。
 
 ### 翻译和自动说话人识别
 
@@ -174,7 +176,7 @@ shengmu transcribe "video.mp4" --engine local --model small --language zh \
 本机首次运行建议先使用 `tiny` 或 `base` 验证流程，再根据准确度需求选择 `small` / `medium` / `large-v3`。本地转写速度和内存取决于模型及硬件。
 
 ```bash
-# Mac / 通用 CPU 默认使用 int8；不使用 CUDA 或 MPS
+# Mac / 通用 CPU 默认使用 int8
 shengmu transcribe video.mp4 --model small --device cpu --compute-type int8
 
 # NVIDIA GPU；需另行配置兼容的 CUDA / cuDNN
@@ -185,6 +187,42 @@ shengmu transcribe video.mp4 --model /path/to/model
 ```
 
 可通过 `SHENGMU_MODEL_DIR` 指定模型缓存目录。默认使用模型库自己的缓存位置。
+
+### 转写断点续跑
+
+CLI 和 GUI 默认启用。转写按最多 **60 秒**分块，优先在切点前的静音处断开；每块完整成功后保存字幕、真实词时间、识别语言和诊断信息。失败、取消、断电或服务重启后，重复同一命令或点击“继续转写”，只重新识别尚未完成的部分，不导出半成品字幕。
+
+```bash
+shengmu transcribe video.mp4 --format srt json --asr-chunk-seconds 60
+# 中断后重跑同一命令；更换输出目录也能恢复
+shengmu transcribe video.mp4 --format srt json --output-dir recovered
+# 明确重新识别；已有输出仍需使用 --overwrite 或更换目录
+shengmu transcribe video.mp4 --no-resume --output-dir fresh
+```
+
+`--asr-chunk-seconds` 可设 30–600 秒，GUI 位于“识别提示与质量选项”；`--chunk-seconds` 继续控制 OpenAI 引擎内部的单次请求上限。原有 `--resume` / `--no-resume` 和 `--checkpoint-dir` 同时用于转写与翻译。CLI 检查点保存在用户缓存的 `shengmu/checkpoints/asr/`，命令行目录选项或 `SHENGMU_CHECKPOINT_DIR` 可覆盖；GUI 检查点位于各项目的 `.asr-cache/`，删除任务时一并清理。缓存包含字幕文本，不保存音频副本或 API Key，可删除相应目录释放空间。
+
+文件路径、大小、修改时间、音轨、模型、实际转写后端、识别设置或分块长度变化会隔离旧检查点；同一模型标识背后的远端权重被替换时请用 `--no-resume`。缓存校验失败时从首个损坏分块重算，保留之前通过校验的部分；同一检查点禁止多个进程同时转写。旧版一键翻译流程的完整 ASR 缓存仍可迁移读取，原缓存不改写。
+
+恢复时仍需重新提取临时音频。自动说话人识别在完整转写之后执行，中断后会重新运行该步骤并复用已保存的转写。取消需等待当前模型加载 / 请求 / 分块推理返回；尚未完整保存的当前分块会重算。连续对白的分块边界仍需校对。最终 JSON 元数据和 CLI 结果的 `transcription`、任务状态的 `asr_stats` 提供完成 / 恢复分块数及秒数；字幕文件仍在全部流程成功后导出。
+
+### Apple Silicon Mac GPU
+
+在 M 系列 Mac 上使用原生 arm64 Python，安装可选 GPU 依赖后重启 GUI：
+
+```bash
+python -m pip install -e ".[all,mlx]"
+shengmu doctor
+shengmu gui
+# 或直接使用 CLI；auto 精度在 Mac GPU 上使用 FP16
+shengmu transcribe video.mp4 --device mlx --model small --language zh --format srt json
+```
+
+GUI 的“计算设备”选择 **Apple GPU · MLX**，精度选“自动”或 FP16 / FP32。设备选择“自动”时，可用的 MLX 优先用于 Apple Silicon；缺少依赖或 Metal 不可用时沿用原有 CPU / NVIDIA 后端。默认仍选择 CPU；明确选择 `mlx` 时不会悄悄退回 CPU。Intel Mac 不支持此后端。`shengmu doctor` 的 `mlx` 字段分别报告平台、依赖和 Metal 可用性；受限或无 GPU 的运行环境会给出提示。
+
+首次使用下载对应的 [MLX Whisper 模型](https://github.com/ml-explore/mlx-examples/tree/main/whisper)，CPU / CUDA 的 CTranslate2 权重不能复用。GUI 模型管理器随设备切换，MLX 托管权重位于模型根目录的 `managed/mlx/`；设置 `SHENGMU_MODEL_DIR` 时自动下载的共享缓存位于其 `mlx-hub/`。CLI 也可使用 `--model /path/to/mlx-model` 或 MLX Whisper 仓库标识，缓存完整后可离线使用。
+
+MLX 路径保留真实词时间戳、Silero VAD、识别提示和置信诊断；按最多 60 秒分块，优先在静音处切分，并恢复静音与音轨偏移。取消需等待当前模型下载或分块推理返回。跨块前文仅在勾选“使用前文上下文”时携带。MLX Whisper 0.4 使用贪心 / 温度回退解码，不支持原后端的束搜索和额外重复惩罚；“减少重复”方案保留阈值调整。VAD 预处理运行在 CPU，Whisper 推理与词对齐使用 Metal。MLX 依赖较大，`[all]` 不包含此可选项。
 
 ### OpenAI API
 
@@ -295,7 +333,7 @@ python -m pip install -e ".[all,dev]"
 pytest -q --cov=shengmu --cov-report=term-missing --cov-fail-under=80 -W error
 ruff check .
 ruff format --check .
-node --test tests/test_editor.cjs
+node --test tests/test_editor.cjs tests/test_studio_settings.cjs
 node --check src/shengmu/web/app.js
 node --check src/shengmu/web/editor.js
 node --check src/shengmu/web/studio.js

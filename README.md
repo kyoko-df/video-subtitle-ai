@@ -7,7 +7,7 @@ A Python project that can be developed and run directly: FFmpeg extracts the sel
 ## Implemented
 
 - Reads duration, audio track numbers, languages, channel counts, and start offsets via ffprobe; extracts 16 kHz mono PCM audio via FFmpeg.
-- Local Whisper model transcription with automatic language detection, CPU / NVIDIA CUDA, word-level timestamps, recognition prompts, and silence filtering; reuses the most recently used model.
+- Local Whisper transcription with automatic language detection, CPU / NVIDIA CUDA / Apple Silicon GPU (optional MLX), word-level timestamps, recognition prompts, and silence filtering; reuses the most recently used model.
 - Re-segments captions from word-level timestamps, preferring punctuation breaks; Chinese / Japanese lines are capped at 20 characters, other languages at 42, with at most 2 lines and 7 seconds per cue.
 - OpenAI `whisper-1` transcription requesting word-level and segment timestamps; long audio is chunked at up to 600 seconds, preferring silence within 5 seconds before the boundary, and the next chunk carries the previous text as a prompt.
 - Exports **SRT, WebVTT, ASS, TXT, JSON**; TXT is plain text, the rest keep timing.
@@ -30,7 +30,8 @@ Install FFmpeg first and make sure both `ffmpeg` and `ffprobe` run in a terminal
 
 ```bash
 # macOS
-brew install ffmpeg
+brew install ffmpeg-full
+export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"
 
 # Debian / Ubuntu
 sudo apt-get update
@@ -174,7 +175,7 @@ shengmu transcribe "video.mp4" --engine local --model small --language zh \
 On a first local run, verify the flow with `tiny` or `base`, then pick `small` / `medium` / `large-v3` according to your accuracy needs. Local transcription speed and memory depend on the model and hardware.
 
 ```bash
-# Mac / generic CPU defaults to int8; no CUDA or MPS
+# Mac / generic CPU defaults to int8
 shengmu transcribe video.mp4 --model small --device cpu --compute-type int8
 
 # NVIDIA GPU; compatible CUDA / cuDNN must be configured separately
@@ -185,6 +186,39 @@ shengmu transcribe video.mp4 --model /path/to/model
 ```
 
 `SHENGMU_MODEL_DIR` sets the model cache directory. By default the model library's own cache location is used.
+
+### Resumable transcription
+
+CLI and GUI transcription now save a checkpoint after each complete chunk on CPU, CUDA, MLX, and OpenAI. Chunks default to at most 60 seconds and prefer nearby silence. After failure, cancellation, or a service restart, repeat the command or choose “继续转写” in task history; “从头重试” starts over.
+
+```bash
+shengmu transcribe video.mp4 --asr-chunk-seconds 60 --format srt json
+# Resume, including when changing the output directory
+shengmu transcribe video.mp4 --output-dir recovered --format srt json
+shengmu transcribe video.mp4 --no-resume --output-dir fresh
+```
+
+`--asr-chunk-seconds` accepts 30–600 seconds; `--chunk-seconds` still limits individual OpenAI requests. `--resume`, `--no-resume`, and `--checkpoint-dir` apply to both transcription and translation. CLI chunk checkpoints live under the user checkpoint directory's `asr/`, also configurable with `SHENGMU_CHECKPOINT_DIR`. GUI checkpoints live in each project's `.asr-cache/` and are deleted with the task. They contain subtitle text, word timings, and diagnostics, without audio copies or API keys.
+
+Source path / size / modification time, track, model, backend, recognition settings, and chunk size isolate checkpoints. Use `--no-resume` if weights behind the same remote model identifier change. A damaged chunk invalidates its suffix, retaining the validated prefix; concurrent writers to one checkpoint are rejected. Older completed ASR caches from the combined translation workflow remain readable without modifying the originals.
+
+Resuming still extracts temporary audio again. Optional diarization runs after all chunks and is rerun when interrupted. Cancellation waits for the current load / request / inference call; the unfinished chunk is repeated. Review continuous speech around chunk boundaries. Files are exported only after the full workflow succeeds. JSON metadata includes `asr_stats`; CLI output uses `transcription`, and GUI job status also exposes `asr_stats`, with completed / restored chunk counts and seconds.
+
+### Apple Silicon Mac GPU
+
+Use native arm64 Python on an M-series Mac and install the optional GPU dependencies:
+
+```bash
+python -m pip install -e ".[all,mlx]"
+shengmu doctor
+shengmu transcribe video.mp4 --device mlx --model small --format srt json
+```
+
+Restart the GUI and select **Apple GPU · MLX** with Auto / FP16 / FP32 precision. Auto precision uses FP16 on MLX and INT8 on CPU. The device still defaults to CPU; `--device auto` prefers available MLX on Apple Silicon, otherwise keeps the original CPU / NVIDIA backend. Explicit `mlx` requests fail clearly when unsupported. Intel Macs are unsupported. The `mlx` field in `doctor` reports platform, dependency, and Metal availability without running inference.
+
+The [MLX Whisper backend](https://github.com/ml-explore/mlx-examples/tree/main/whisper) needs separate weights; CTranslate2 models cannot be reused. The model manager follows the selected device and keeps managed MLX weights under `managed/mlx/`. With `SHENGMU_MODEL_DIR`, automatic Hub downloads use its `mlx-hub/` cache. The CLI also accepts an MLX model directory or repository identifier; complete cached models work offline.
+
+Word timestamps, CPU-based Silero VAD, prompts, and diagnostics are retained. Metal handles Whisper inference and word alignment. Audio is processed in silence-aware chunks of at most 60 seconds, restoring removed silence and track offsets; cancellation waits for the current download / inference call. Context crosses chunks only when enabled. MLX Whisper 0.4 uses greedy / temperature-fallback decoding, with no beam search or extra repetition penalty; the less-repetition profile still adjusts thresholds. `[all]` does not include the larger optional MLX dependencies.
 
 ### OpenAI API
 
@@ -295,7 +329,7 @@ python -m pip install -e ".[all,dev]"
 pytest -q --cov=shengmu --cov-report=term-missing --cov-fail-under=80 -W error
 ruff check .
 ruff format --check .
-node --test tests/test_editor.cjs
+node --test tests/test_editor.cjs tests/test_studio_settings.cjs
 node --check src/shengmu/web/app.js
 node --check src/shengmu/web/editor.js
 node --check src/shengmu/web/studio.js

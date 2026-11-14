@@ -17,6 +17,7 @@ from .captions import (
     repetitive_text,
     split_caption,
 )
+from .devices import local_backend
 from .errors import local_model_error
 from .media import check_cancel
 from .models import Segment, SubtitleError, shift_segment
@@ -30,7 +31,7 @@ class EngineOptions:
     model: str = "small"
     language: str | None = None
     device: str = "cpu"
-    compute_type: str = "int8"
+    compute_type: str = "auto"
     prompt: str = ""
     chunk_seconds: int = 600
     condition_on_previous_text: bool = False
@@ -43,6 +44,11 @@ class EngineOptions:
     log_prob_threshold: float | None = None
     no_speech_threshold: float | None = None
     vad_threshold: float | None = None
+    asr_chunk_seconds: int = 60
+    resume: bool = True
+    checkpoint_dir: Path | None = None
+    detected_language: str | None = field(default=None, repr=False, compare=False)
+    context: str = field(default="", repr=False, compare=False)
 
     def decoding_parameters(self):
         profiles = {
@@ -77,15 +83,17 @@ class EngineOptions:
             if self.vad_threshold is not None
             else result["vad_parameters"]["threshold"]
         }
+        if self.engine == "local" and local_backend(self.device) == "mlx":
+            # mlx-whisper 0.4 does not implement CTranslate2's repetition penalty.
+            result.pop("repetition_penalty", None)
         return result
 
     @property
     def initial_prompt(self) -> str | None:
-        if self.prompt:
-            return self.prompt
-        if self.language and self.language.lower().startswith("zh"):
-            return "以下是普通话的句子，请使用简体中文，并添加标点符号。"
-        return None
+        prompt = self.prompt
+        if not prompt and self.language and self.language.lower().startswith("zh"):
+            prompt = "以下是普通话的句子，请使用简体中文，并添加标点符号。"
+        return "\n".join(part for part in (prompt, self.context) if part) or None
 
     def validate(self) -> None:
         self.captions.validate()
@@ -93,8 +101,16 @@ class EngineOptions:
             raise SubtitleError("转写引擎必须是 local 或 openai。")
         if not 30 <= self.chunk_seconds <= 600:
             raise SubtitleError("API 分块长度必须在 30 到 600 秒之间。")
-        if self.device not in ("cpu", "cuda", "auto"):
-            raise SubtitleError("设备必须是 cpu、cuda 或 auto。")
+        if type(self.asr_chunk_seconds) is not int or not 30 <= self.asr_chunk_seconds <= 600:
+            raise SubtitleError("转写续跑分块长度必须是 30 到 600 秒之间的整数。")
+        if self.device not in ("cpu", "cuda", "mlx", "auto"):
+            raise SubtitleError("设备必须是 cpu、cuda、mlx 或 auto。")
+        if (
+            self.engine == "local"
+            and local_backend(self.device) == "mlx"
+            and self.compute_type not in ("auto", "float16", "float32")
+        ):
+            raise SubtitleError("Mac GPU 仅支持 auto、float16 或 float32 精度，请调整计算精度。")
         parameters = self.decoding_parameters()
         for value, low, high in [
             (parameters["compression_ratio_threshold"], 1, 10),
@@ -121,6 +137,14 @@ class LocalEngine:
         self, audio: Path, options: EngineOptions, progress: Progress, cancel: Event | None
     ) -> tuple[list[Segment], str | None, str]:
         with self._lock:
+            from .mlx_engine import MLXEngine
+
+            if local_backend(options.device) == "mlx":
+                # Avoid keeping both full CPU/CUDA and Metal models in unified memory.
+                LocalEngine._cached_key = LocalEngine._cached_model = None
+                return MLXEngine().transcribe(audio, options, progress, cancel)
+            if MLXEngine._cached_key is not None:
+                MLXEngine.clear_cache()
             return self._transcribe(audio, options, progress, cancel)
 
     def _transcribe(
@@ -136,7 +160,9 @@ class LocalEngine:
             key = (
                 options.model,
                 options.device,
-                options.compute_type,
+                ("float16" if options.device == "cuda" else "int8")
+                if options.compute_type == "auto"
+                else options.compute_type,
                 os.environ.get("SHENGMU_MODEL_DIR"),
             )
             if LocalEngine._cached_key != key or LocalEngine._cached_model is None:
@@ -145,7 +171,7 @@ class LocalEngine:
                 LocalEngine._cached_model = WhisperModel(
                     options.model,
                     device=options.device,
-                    compute_type=options.compute_type,
+                    compute_type=key[2],
                     download_root=key[3],
                 )
                 LocalEngine._cached_key = key
@@ -153,7 +179,7 @@ class LocalEngine:
             check_cancel(cancel)
             segments, info = model.transcribe(
                 str(audio),
-                language=options.language,
+                language=options.language or options.detected_language,
                 initial_prompt=options.initial_prompt,
                 vad_filter=True,
                 beam_size=5,
@@ -227,12 +253,13 @@ def silence_cut(frames: bytes, rate: int, channels: int, width: int) -> int | No
     return candidates[-1] if candidates else None
 
 
-def wav_chunks(audio: Path, chunk_seconds: int):
+def wav_chunks(audio: Path, chunk_seconds: int, *, start_frame=0, chunk_name="api-chunk.wav"):
     """Yield bounded PCM WAV chunks without holding a whole recording in memory."""
     with wave.open(str(audio), "rb") as source:
         rate = source.getframerate()
         frames_per_chunk = rate * chunk_seconds
-        offset = 0
+        source.setpos(start_frame)
+        offset = start_frame
         while True:
             frames = source.readframes(frames_per_chunk)
             if not frames:
@@ -243,7 +270,7 @@ def wav_chunks(audio: Path, chunk_seconds: int):
                 if cut is not None:
                     frames = frames[: cut * frame_size]
                     source.setpos(offset + cut)
-            chunk = audio.parent / "api-chunk.wav"
+            chunk = audio.parent / chunk_name
             try:
                 with wave.open(str(chunk), "wb") as target:
                     target.setparams(source.getparams())

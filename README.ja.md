@@ -7,7 +7,7 @@
 ## 実装済み機能
 
 - ffprobe で再生時間、音声トラック番号、言語、チャンネル数、開始オフセットを取得し、FFmpeg で 16 kHz モノラル PCM 音声を抽出します。
-- ローカル Whisper モデルによる文字起こし。言語自動判定、CPU / NVIDIA CUDA、単語タイムスタンプ、認識プロンプト、無音フィルタに対応し、直近に使用したモデルを再利用します。
+- ローカル Whisper モデルによる文字起こし。言語自動判定、CPU / NVIDIA CUDA / Apple Silicon GPU（任意の MLX）、単語タイムスタンプ、認識プロンプト、無音フィルタに対応し、直近に使用したモデルを再利用します。
 - 単語タイムスタンプから字幕を再分割し、句読点での区切りを優先します。中国語 / 日本語は 1 行 20 文字、その他の言語は 42 文字まで。1 字幕あたり最大 2 行・7 秒です。
 - OpenAI `whisper-1` による文字起こしは単語・セグメント両方のタイムスタンプを要求します。長い音声は最大 600 秒ごとに分割し、境界の 5 秒前以内の無音区間を優先して切り、次のブロックへ前文をプロンプトとして引き継ぎます。
 - **SRT、WebVTT、ASS、TXT、JSON** に出力します。TXT はプレーンテキスト、それ以外は時間情報を保持します。
@@ -30,7 +30,8 @@
 
 ```bash
 # macOS
-brew install ffmpeg
+brew install ffmpeg-full
+export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"
 
 # Debian / Ubuntu
 sudo apt-get update
@@ -174,7 +175,7 @@ shengmu transcribe "video.mp4" --engine local --model small --language zh \
 本機での初回実行は `tiny` または `base` で流れを確認し、精度の必要に応じて `small` / `medium` / `large-v3` を選ぶのがおすすめです。ローカル文字起こしの速度とメモリはモデルとハードウェアに依存します。
 
 ```bash
-# Mac / 汎用 CPU は既定で int8。CUDA や MPS は使わない
+# Mac / 汎用 CPU は既定で int8
 shengmu transcribe video.mp4 --model small --device cpu --compute-type int8
 
 # NVIDIA GPU。互換の CUDA / cuDNN を別途構成する必要あり
@@ -185,6 +186,38 @@ shengmu transcribe video.mp4 --model /path/to/model
 ```
 
 `SHENGMU_MODEL_DIR` でモデルキャッシュのディレクトリを指定できます。既定ではモデルライブラリ自身のキャッシュ位置を使います。
+
+### 文字起こしの中断再開
+
+CLI と GUI は CPU / CUDA / MLX / OpenAI の各バックエンドで、完了したチャンクを保存します。既定は最大 60 秒で、近くに無音があれば境界を調整します。失敗、キャンセル、サービス再起動の後は同じコマンドまたは履歴の「继续转写」で再開し、「从头重试」で最初から処理できます。
+
+```bash
+shengmu transcribe video.mp4 --asr-chunk-seconds 60 --format srt json
+shengmu transcribe video.mp4 --output-dir recovered --format srt json
+shengmu transcribe video.mp4 --no-resume --output-dir fresh
+```
+
+`--asr-chunk-seconds` は 30–600 秒です。`--chunk-seconds` は従来どおり OpenAI の個別リクエスト上限を設定します。`--resume` / `--no-resume` / `--checkpoint-dir` は文字起こしと翻訳の両方に適用します。CLI のキャッシュはユーザーのチェックポイントディレクトリ内の `asr/`、GUI は各プロジェクトの `.asr-cache/` に保存し、タスク削除時に消去します。字幕、単語時刻、診断情報を保存し、音声のコピーや API キーは保存しません。
+
+ソースのパス・サイズ・更新日時、音声トラック、モデル、バックエンド、認識設定、チャンク長の変更はキャッシュを分離します。同じリモートモデル名の重みを差し替えた場合は `--no-resume` を指定してください。破損チャンク以降を再処理し、それ以前の有効な結果を保持します。同じチェックポイントへの並行書き込みは拒否します。旧版の翻訳フローの完了済み ASR キャッシュも元ファイルを変更せず読み込めます。
+
+再開時も一時音声を再抽出します。話者識別は全チャンクの後に実行し、中断時はこの手順を再実行します。キャンセルは現在の処理の完了を待ち、未保存のチャンクを再処理します。連続発話の境界は校正してください。全工程が成功するまで字幕をエクスポートしません。JSON の `asr_stats`、CLI 結果の `transcription`、GUI タスク状態の `asr_stats` に完了・再利用チャンク数と秒数を返します。
+
+### Apple Silicon Mac GPU
+
+M シリーズ Mac とネイティブ arm64 Python で、GPU 用の追加依存関係をインストールします。
+
+```bash
+python -m pip install -e ".[all,mlx]"
+shengmu doctor
+shengmu transcribe video.mp4 --device mlx --model small --format srt json
+```
+
+GUI を再起動し、計算デバイスで **Apple GPU · MLX**、精度で「自動」または FP16 / FP32 を選びます。MLX の自動精度は FP16、CPU は INT8 です。既定のデバイスは CPU のままです。「自動」は Apple Silicon で利用可能な MLX を優先し、利用できない場合は既存の CPU / NVIDIA バックエンドを使います。明示的な `mlx` 指定は未対応環境でエラーになります。Intel Mac は未対応です。`doctor` の `mlx` 項目でプラットフォーム、依存関係、Metal の状態を確認できます。
+
+[MLX Whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper) は専用モデルを使い、CTranslate2 の重みは再利用できません。モデルマネージャーはデバイスに応じて切り替わり、MLX の管理対象モデルを `managed/mlx/` に保存します。`SHENGMU_MODEL_DIR` 設定時の自動ダウンロードは `mlx-hub/` を使います。CLI では MLX モデルのローカルディレクトリまたはリポジトリも指定でき、完全なキャッシュがあればオフラインで使えます。
+
+単語タイムスタンプ、CPU の Silero VAD、認識プロンプト、診断情報を保持し、Whisper 推論と単語アラインメントは Metal で実行します。最大 60 秒の無音優先チャンクで処理し、除去した無音と音声トラックのオフセットを復元します。キャンセルは現在のダウンロードまたは推論の完了を待ちます。MLX Whisper 0.4 はビーム探索と追加の反復ペナルティに未対応で、反復軽減プリセットはしきい値のみ調整します。チャンク間の文脈は有効にした場合のみ引き継ぎます。`[all]` は MLX の追加依存関係を含みません。
 
 ### OpenAI API
 
@@ -295,7 +328,7 @@ python -m pip install -e ".[all,dev]"
 pytest -q --cov=shengmu --cov-report=term-missing --cov-fail-under=80 -W error
 ruff check .
 ruff format --check .
-node --test tests/test_editor.cjs
+node --test tests/test_editor.cjs tests/test_studio_settings.cjs
 node --check src/shengmu/web/app.js
 node --check src/shengmu/web/editor.js
 node --check src/shengmu/web/studio.js

@@ -30,7 +30,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Install FFmpeg on macOS
         if: runner.os == 'macOS'
-        run: brew list ffmpeg || brew install ffmpeg
+        run: |
+          brew list ffmpeg-full || brew install ffmpeg-full
+          echo "$(brew --prefix ffmpeg-full)/bin" >> "$GITHUB_PATH"
       - name: Install FFmpeg on Windows
         if: runner.os == 'Windows'
         run: choco install ffmpeg --no-progress -y
@@ -48,7 +50,7 @@ jobs:
         run: pytest -q --cov=shengmu --cov-report=term-missing --cov-fail-under=80 -W error
       - name: JavaScript tests and syntax
         run: |
-          node --test tests/test_editor.cjs
+          node --test tests/test_editor.cjs tests/test_studio_settings.cjs
           node --check src/shengmu/web/app.js
           node --check src/shengmu/web/editor.js
           node --check src/shengmu/web/studio.js

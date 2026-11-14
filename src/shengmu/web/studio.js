@@ -158,6 +158,8 @@ function jobSettings() {
     condition_on_previous_text: $("previous-text").checked,
     filter_hallucinations: $("filter-hallucinations").checked,
     asr_profile: $("asr-profile").value,
+    asr_chunk_seconds: Number($("asr-chunk-seconds").value),
+    resume: $("asr-resume").checked,
     ...Object.fromEntries(
       asrFields.map((key) => [
         key,
@@ -191,6 +193,10 @@ function applySettings(settings = {}) {
     if (settings[key] !== undefined) $(key).value = settings[key] ?? "";
   if (settings.compute_type) $("compute").value = settings.compute_type;
   if (settings.asr_profile) $("asr-profile").value = settings.asr_profile;
+  if (settings.asr_chunk_seconds !== undefined)
+    $("asr-chunk-seconds").value = settings.asr_chunk_seconds;
+  if (settings.resume !== undefined)
+    $("asr-resume").checked = settings.resume;
   for (const key of asrFields)
     if (settings[key] !== undefined)
       $(key.replaceAll("_", "-")).value = settings[key] ?? "";
@@ -518,13 +524,17 @@ async function refreshHistory() {
       if (["error", "cancelled"].includes(job.status))
         row.append(
           makeButton(
-            "重试",
+            "继续转写",
             async () => {
-              await api(`/api/jobs/${job.id}/retry`, { method: "POST" });
+              await api(`/api/jobs/${job.id}/retry?resume=true`, { method: "POST" });
               await refreshHistory();
             },
             !job.media_available,
           ),
+          makeButton("从头重试", async () => {
+            await api(`/api/jobs/${job.id}/retry?resume=false`, { method: "POST" });
+            await refreshHistory();
+          }, !job.media_available),
         );
       if (!terminal.has(job.status))
         row.append(
@@ -968,8 +978,10 @@ async function performOperation(kind, body) {
 
 async function refreshModels() {
   clearTimeout(modelTimer);
+  const backend = selectedLocalBackend();
   try {
-    const models = await api("/api/models");
+    const models = await api("/api/models?backend=" + backend);
+    if (backend !== selectedLocalBackend()) return;
     $("model-manager").replaceChildren();
     for (const model of models) {
       const row = document.createElement("div");
@@ -977,6 +989,7 @@ async function refreshModels() {
       const text = document.createElement("span");
       const active = ["queued", "running"].includes(model.download?.status);
       text.textContent =
+        (backend === "mlx" ? "MLX · " : "") +
         model.name +
         " · " +
         (active
@@ -998,7 +1011,8 @@ async function refreshModels() {
           async () => {
             await api(
               `/api/models/${model.name}` +
-                (active ? "/cancel" : model.downloaded ? "" : "/download"),
+                (active ? "/cancel" : model.downloaded ? "" : "/download") +
+                "?backend=" + backend,
               { method: model.downloaded && !active ? "DELETE" : "POST" },
             );
             await refreshModels();

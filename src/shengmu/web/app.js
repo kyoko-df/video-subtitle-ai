@@ -60,7 +60,8 @@ function updateButtons() {
   const engineReady =
     state.config &&
     (state.engine === "local"
-      ? state.config.local_engine_installed
+      ? state.config.local_engine_installed &&
+        (selectedLocalBackend() !== "mlx" || state.config.mlx?.available)
       : state.config.openai_engine_installed &&
         state.config.openai_key_configured);
   const editing =
@@ -100,6 +101,24 @@ function updateButtons() {
     input.disabled = state.saving || state.busy;
   }
   $("source-path").disabled = state.busy || state.saving || state.uploading;
+  updateLocalControls();
+}
+
+function selectedLocalBackend() {
+  const device = $("device").value;
+  return device === "mlx" || (device === "auto" && state.config?.mlx?.available)
+    ? "mlx"
+    : "faster-whisper";
+}
+
+function updateLocalControls() {
+  const mlx = selectedLocalBackend() === "mlx";
+  const appleOption = $("device").querySelector('[value="mlx"]');
+  appleOption.disabled = !state.config?.mlx?.supported;
+  for (const option of $("compute").options)
+    option.disabled = mlx && !["auto", "float16", "float32"].includes(option.value);
+  if (mlx && !["auto", "float16", "float32"].includes($("compute").value))
+    $("compute").value = "auto";
 }
 
 function switchEngine(engine) {
@@ -114,9 +133,14 @@ function switchEngine(engine) {
     (engine === "local"
       ? state.config.local_engine_installed
       : state.config.openai_engine_installed);
+  const mlx = selectedLocalBackend() === "mlx";
   $("engine-note").textContent =
     engine === "local"
-      ? installed
+      ? mlx
+        ? state.config?.mlx?.available
+          ? "使用 Apple GPU，首次运行下载 MLX 模型。减少重复方案只调整阈值，不包含额外重复惩罚。"
+          : state.config?.mlx?.message || "正在检查 Mac GPU…"
+        : installed
         ? "音频保留在本机，首次运行会下载模型。"
         : '本地引擎未安装：pip install -e ".[local]"'
       : installed
@@ -994,7 +1018,13 @@ $("dropzone").addEventListener("drop", (event) =>
 $("local-mode").onclick = () => switchEngine("local");
 $("openai-mode").onclick = () => switchEngine("openai");
 $("device").onchange = () => {
-  $("compute").value = $("device").value === "cuda" ? "float16" : "int8";
+  $("compute").value = ["cuda", "mlx"].includes($("device").value)
+    ? "float16"
+    : $("device").value === "auto"
+      ? "auto"
+      : "int8";
+  switchEngine(state.engine);
+  if (typeof refreshModels === "function") refreshModels();
 };
 $("format-options").onchange = () => {
   if (state.job?.status === "done")

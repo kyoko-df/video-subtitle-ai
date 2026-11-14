@@ -467,8 +467,8 @@ def test_model_download_inventory_removal_and_failures(monkeypatch, tmp_path):
     root = tmp_path / "models"
     monkeypatch.setenv("SHENGMU_MODEL_DIR", str(root))
 
-    def download(root, name, update, cancel):
-        target = root / name
+    def download(root, name, update, cancel, backend="faster-whisper"):
+        target = model_manager.model_path(root, name, backend)
         target.mkdir(parents=True)
         update(50, 100, "test")
         for file in ("model.bin", "config.json", "tokenizer.json", ".complete"):
